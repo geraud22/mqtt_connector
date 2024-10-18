@@ -49,7 +49,7 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 }
 
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
-	fmt.Println("Client Connected\n")
+	fmt.Println("Client Connected")
 }
 
 var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
@@ -58,8 +58,10 @@ var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err
 
 type SubscriptionHandler interface {
 	SendMessageToChannel(payload []byte)
-	GetChannel() <-chan []byte
+	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() chan error
+	ClosePayloadChannel()
+	CloseErrorChannel()
 }
 
 type Handler struct {
@@ -71,12 +73,20 @@ func (h *Handler) SendMessageToChannel(payload []byte) {
 	h.payloadChannel <- payload
 }
 
-func (h *Handler) GetChannel() <-chan []byte {
+func (h *Handler) GetPayloadChannel() <-chan []byte {
 	return h.payloadChannel
 }
 
 func (h *Handler) GetErrorChannel() chan error {
 	return h.errorChannel
+}
+
+func (h *Handler) ClosePayloadChannel() {
+	close(h.payloadChannel)
+}
+
+func (h *Handler) CloseErrorChannel() {
+	close(h.errorChannel)
 }
 
 func newHandler() *Handler {
@@ -137,15 +147,19 @@ func Sub(topicToSub string) (SubscriptionHandler, error) {
 // Parameters:
 // - ctx: A context.WithCancel used to control the lifetime of the handler. It should be cancelled to stop the handler gracefully.
 // - handler: A SubscriptionHandler that manages the channel through which payloads are received.
+// - numWorkers: Determines how many workers are spawned to handle payload processing.
 // - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
-func AsyncPayloadHandler(ctx context.Context, handler SubscriptionHandler, processFunc func([]byte) error) {
+func AsyncPayloadHandler(ctx context.Context, handler SubscriptionHandler, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
-	for {
-		select {
-		case payload := <-handler.GetChannel():
-			wg.Add(1)
-			go func(payload []byte) {
-				defer wg.Done()
+	payloadCh := handler.GetPayloadChannel()
+	workerTask := func() {
+		defer wg.Done()
+		for {
+			select {
+			case payload, ok := <-payloadCh:
+				if !ok {
+					return
+				}
 				if err := processFunc(payload); err != nil {
 					select {
 					case handler.GetErrorChannel() <- err:
@@ -153,14 +167,22 @@ func AsyncPayloadHandler(ctx context.Context, handler SubscriptionHandler, proce
 						return
 					}
 				}
-			}(payload)
-		case <-ctx.Done():
-			log.Println("payload handler received shutdown signal")
-			wg.Wait()
-			close(handler.GetErrorChannel())
-			return
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go workerTask()
+	}
+	<-ctx.Done()
+	log.Println("payload handler received shutdown signal")
+	handler.ClosePayloadChannel()
+	wg.Wait()
+	handler.CloseErrorChannel()
+	log.Println("all workers stopped, error channel closed")
 }
 
 // PayloadHandler listens on the channel of the given SubscriptionHandler Interface
@@ -175,7 +197,7 @@ func AsyncPayloadHandler(ctx context.Context, handler SubscriptionHandler, proce
 // Returns:
 // - An error if something goes wrong during processing.
 func PayloadHandler(handler SubscriptionHandler, processFunc func([]byte) error) error {
-	payload := <-handler.GetChannel()
+	payload := <-handler.GetPayloadChannel()
 	if err := processFunc(payload); err != nil {
 		return fmt.Errorf("error processing payload: %v", err)
 	}
