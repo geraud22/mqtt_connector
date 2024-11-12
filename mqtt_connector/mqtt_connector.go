@@ -16,7 +16,8 @@ import (
 var Client mqtt.Client
 var config = cfy.Get("config")
 var handlers = make(map[string]SubscriptionHandler)
-var match = func(wildcard, topic string) bool {
+
+func Match(wildcard, topic string) bool {
 	wildcardParts := strings.Split(wildcard, "/")
 	topicParts := strings.Split(topic, "/")
 	if len(wildcardParts) != len(topicParts) {
@@ -41,7 +42,7 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 		return
 	}
 	for wildcard, handler := range handlers {
-		if match(wildcard, topic) {
+		if Match(wildcard, topic) {
 			handler.SendMessageToChannel(msg.Payload())
 			return
 		}
