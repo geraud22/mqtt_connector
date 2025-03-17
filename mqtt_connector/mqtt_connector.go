@@ -12,8 +12,6 @@ import (
 	cfy "github.com/geraud22/config-from-yaml"
 )
 
-var SubbedTopics = make(map[string]string)
-
 func GetDefaultOpts() *mqtt.ClientOptions {
 	config := cfy.Get("config")
 	broker := config.GetString("MQTT.Broker")
@@ -57,15 +55,15 @@ func Match(wildcard, topic string) bool {
 	return true
 }
 
-var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
+func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
-	if SubbedTopics, exists := handlers[topic]; exists {
-		handler.SendMessageToChannel(msg.Payload())
+	if _, exists := h.subbedTopics[topic]; exists {
+		h.SendMessageToChannel(msg.Payload())
 		return
 	}
-	for wildcard, handler := range handlers {
-		if Match(wildcard, topic) {
-			handler.SendMessageToChannel(msg.Payload())
+	for possibleWildcard, _ := range h.subbedTopics {
+		if Match(possibleWildcard, topic) {
+			h.SendMessageToChannel(msg.Payload())
 			return
 		}
 	}
@@ -89,12 +87,10 @@ type SubscriptionHandler interface {
 }
 
 type DefaultHandler struct {
-	client             mqtt.Client
-	payloadChannel     chan []byte
-	errorChannel       chan error
-	messageHandler     mqtt.MessageHandler
-	connectHandler     mqtt.OnConnectHandler
-	connectLostHandler mqtt.ConnectionLostHandler
+	client         mqtt.Client
+	payloadChannel chan []byte
+	errorChannel   chan error
+	subbedTopics   map[string]string
 }
 
 func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
@@ -119,6 +115,7 @@ func NewDefaultHandler() (*DefaultHandler, error) {
 	h := DefaultHandler{
 		payloadChannel: make(chan []byte),
 		errorChannel:   make(chan error),
+		subbedTopics:   make(map[string]string),
 	}
 	opts := GetDefaultOpts()
 	opts.SetDefaultPublishHandler(h.messageHandler)
