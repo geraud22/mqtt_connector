@@ -28,7 +28,6 @@ func GetDefaultOpts() *mqtt.ClientOptions {
 	return opts
 }
 
-// Default ConnectMqtt will get its connection information from config.yml file.
 func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
@@ -37,7 +36,59 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 	return client, nil
 }
 
-func Match(wildcard, topic string) bool {
+type SubscriptionHandler interface {
+	SendMessageToChannel(payload []byte)
+	GetPayloadChannel() <-chan []byte
+	GetErrorChannel() chan error
+	Close() error
+	Subscribe(topic string) error
+	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
+}
+
+type DefaultHandler struct {
+	client         mqtt.Client
+	payloadChannel chan []byte
+	errorChannel   chan error
+	subbedTopics   map[string]string
+}
+
+func NewDefaultHandler() (*DefaultHandler, error) {
+	h := DefaultHandler{
+		payloadChannel: make(chan []byte),
+		errorChannel:   make(chan error),
+		subbedTopics:   make(map[string]string),
+	}
+	opts := GetDefaultOpts()
+	opts.SetDefaultPublishHandler(h.messageHandler)
+	opts.OnConnect = h.connectHandler
+	opts.OnConnectionLost = h.connectLostHandler
+	client, err := ConnectMqtt(opts)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
+	}
+	h.client = client
+	return &h, nil
+}
+
+func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
+	h.payloadChannel <- payload
+}
+
+func (h *DefaultHandler) GetPayloadChannel() <-chan []byte {
+	return h.payloadChannel
+}
+
+func (h *DefaultHandler) GetErrorChannel() chan error {
+	return h.errorChannel
+}
+
+func (h *DefaultHandler) Close() error {
+	close(h.payloadChannel)
+	close(h.errorChannel)
+	return nil
+}
+
+func (h *DefaultHandler) match(wildcard, topic string) bool {
 	wildcardParts := strings.Split(wildcard, "/")
 	topicParts := strings.Split(topic, "/")
 	if len(wildcardParts) != len(topicParts) {
@@ -62,7 +113,7 @@ func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 	for possibleWildcard, _ := range h.subbedTopics {
-		if Match(possibleWildcard, topic) {
+		if h.match(possibleWildcard, topic) {
 			h.SendMessageToChannel(msg.Payload())
 			return
 		}
@@ -77,66 +128,13 @@ func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
 	log.Printf("Connection lost: %v", err)
 }
 
-type SubscriptionHandler interface {
-	SendMessageToChannel(payload []byte)
-	GetPayloadChannel() <-chan []byte
-	GetErrorChannel() chan error
-	Close() error
-	Subscribe(topic string) error
-	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
-}
-
-type DefaultHandler struct {
-	client         mqtt.Client
-	payloadChannel chan []byte
-	errorChannel   chan error
-	subbedTopics   map[string]string
-}
-
-func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
-	h.payloadChannel <- payload
-}
-
-func (h *DefaultHandler) GetPayloadChannel() <-chan []byte {
-	return h.payloadChannel
-}
-
-func (h *DefaultHandler) GetErrorChannel() chan error {
-	return h.errorChannel
-}
-
-func (h *DefaultHandler) Close() error {
-	close(h.payloadChannel)
-	close(h.errorChannel)
-	return nil
-}
-
-func NewDefaultHandler() (*DefaultHandler, error) {
-	h := DefaultHandler{
-		payloadChannel: make(chan []byte),
-		errorChannel:   make(chan error),
-		subbedTopics:   make(map[string]string),
-	}
-	opts := GetDefaultOpts()
-	opts.SetDefaultPublishHandler(h.messageHandler)
-	opts.OnConnect = h.connectHandler
-	opts.OnConnectionLost = h.connectLostHandler
-	client, err := ConnectMqtt(opts)
-	if err != nil {
-		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
-	}
-	h.client = client
-	return &h, nil
-}
-
-// Will subscribe to an mqtt topic.
 func (h *DefaultHandler) Subscribe(topic string) error {
 	h.subbedTopics[topic] = ""
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return fmt.Errorf("failed to subscribe to topic: " + topic)
 	}
-	fmt.Printf("Subscribed to topic: %s\n", topic)
+	log.Printf("Subscribed to topic: %s", topic)
 	return nil
 }
 
