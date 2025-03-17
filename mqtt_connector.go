@@ -19,6 +19,8 @@ type SubscriptionHandler interface {
 	Close() error
 	Subscribe(topic string) error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
+	PayloadProcess(processFunc func([]byte) error)
+	GetClient() (mqtt.Client, error)
 }
 
 func GetDefaultOpts() *mqtt.ClientOptions {
@@ -87,6 +89,13 @@ func (h *DefaultHandler) Close() error {
 	close(h.errorChannel)
 	h.client.Disconnect(250)
 	return nil
+}
+
+func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
+	if h.client.IsConnected() {
+		return h.client, nil
+	}
+	return nil, fmt.Errorf("client not connected")
 }
 
 func (h *DefaultHandler) match(wildcard, topic string) bool {
