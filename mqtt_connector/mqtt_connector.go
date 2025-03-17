@@ -10,11 +10,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	cfy "github.com/geraud22/config-from-yaml"
 )
 
-var Client mqtt.Client
-var config = cfy.Get("config")
 var handlers = make(map[string]SubscriptionHandler)
 
 func Match(wildcard, topic string) bool {
@@ -57,6 +54,20 @@ var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err
 	fmt.Printf("Connection lost: %v\n", err)
 }
 
+// Connect is responsible for connecting the global mqtt.Client.
+// It will retrieve the connection information from the client project's config.yml
+func connect(opts *mqtt.ClientOptions) (*mqtt.Client, error) {
+	opts.SetDefaultPublishHandler(messagePubHandler)
+	opts.SetKeepAlive(60 * time.Second)
+	opts.OnConnect = connectHandler
+	opts.OnConnectionLost = connectLostHandler
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return nil, fmt.Errorf("Error connecting to MQTT: %v", token.Error())
+	}
+	return &client, nil
+}
+
 type SubscriptionHandler interface {
 	SendMessageToChannel(payload []byte)
 	GetPayloadChannel() <-chan []byte
@@ -69,6 +80,10 @@ type DefaultHandler struct {
 	client         *mqtt.Client
 	payloadChannel chan []byte
 	errorChannel   chan error
+}
+
+type MqttConnectionOpts struct {
+	broker, port, clientId, username, password string
 }
 
 func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
@@ -89,38 +104,16 @@ func (h *DefaultHandler) Close() error {
 	return nil
 }
 
-func NewDefaultHandler(s SubscriptionHandler, opts ConnectionOpts) (*DefaultHandler, error) {
+func NewDefaultHandler(s SubscriptionHandler, opts *mqtt.ClientOptions) (*DefaultHandler, error) {
 	client, err := connect(opts)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
 	}
 	return &DefaultHandler{
+		client:         client,
 		payloadChannel: make(chan []byte),
 		errorChannel:   make(chan error),
-	}
-}
-
-// Connect is responsible for connecting the global mqtt.Client.
-// It will retrieve the connection information from the client project's config.yml
-func Connect() {
-	var broker = config.GetString("MQTT.Broker")
-	var port = config.GetInt("MQTT.Port")
-	opts := mqtt.NewClientOptions()
-	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", broker, port))
-	clientID := config.GetString("MQTT.ClientID")
-	username := config.GetString("MQTT.Username")
-	password := config.GetString("MQTT.Password")
-	opts.SetClientID(clientID)
-	opts.SetUsername(username)
-	opts.SetPassword(password)
-	opts.SetDefaultPublishHandler(messagePubHandler)
-	opts.SetKeepAlive(60 * time.Second)
-	opts.OnConnect = connectHandler
-	opts.OnConnectionLost = connectLostHandler
-	Client = mqtt.NewClient(opts)
-	if token := Client.Connect(); token.Wait() && token.Error() != nil {
-		log.Fatalf("Error connecting to MQTT: %v", token.Error())
-	}
+	}, nil
 }
 
 // Sub will subscribe to an MQTT topic, only if the client connection has already been established.
