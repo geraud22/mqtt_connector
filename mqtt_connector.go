@@ -85,6 +85,7 @@ func (h *DefaultHandler) GetErrorChannel() chan error {
 func (h *DefaultHandler) Close() error {
 	close(h.payloadChannel)
 	close(h.errorChannel)
+	h.client.Disconnect(250)
 	return nil
 }
 
@@ -177,9 +178,8 @@ func (h *DefaultHandler) AsyncPayloadProcess(ctx context.Context, numWorkers int
 	}
 	<-ctx.Done()
 	log.Println("payload handler received shutdown signal")
-	h.Close()
 	wg.Wait()
-	log.Println("all workers stopped, error channel closed")
+	log.Println("all workers stopped, handler channels remain open.")
 }
 
 // PayloadHandler listens on the channel of the given SubscriptionHandler Interface
