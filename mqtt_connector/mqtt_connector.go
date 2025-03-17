@@ -2,7 +2,6 @@ package mqtt_connector
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -14,7 +13,7 @@ import (
 )
 
 // Default ConnectMqtt will get its connection information from config.yml file.
-func ConnectMqtt() (*mqtt.Client, error) {
+func ConnectMqtt() (mqtt.Client, error) {
 	config := cfy.Get("config")
 	broker := config.GetString("MQTT.Broker")
 	port := config.GetInt("MQTT.Port")
@@ -37,7 +36,7 @@ func ConnectMqtt() (*mqtt.Client, error) {
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		return nil, fmt.Errorf("Error connecting to MQTT: %v", token.Error())
 	}
-	return &client, nil
+	return client, nil
 }
 
 var handlers = make(map[string]SubscriptionHandler)
@@ -86,15 +85,16 @@ type SubscriptionHandler interface {
 	SendMessageToChannel(payload []byte)
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() chan error
-	connect() error
 	Close() error
+	Subscribe(topic string) error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 }
 
 type DefaultHandler struct {
-	client         *mqtt.Client
+	client         mqtt.Client
 	payloadChannel chan []byte
 	errorChannel   chan error
+	subbedTopics   map[string]string
 }
 
 func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
@@ -124,6 +124,7 @@ func NewDefaultHandler() (*DefaultHandler, error) {
 		client:         client,
 		payloadChannel: make(chan []byte),
 		errorChannel:   make(chan error),
+		subbedTopics:   make(map[string]string),
 	}, nil
 }
 
@@ -136,14 +137,14 @@ func NewDefaultHandler() (*DefaultHandler, error) {
 //   - SubscriptionHandler: An interface which provides a channel where incoming message payloads will be sent,
 //     via the package variable messagePubHandler
 //   - Error: If the request to subscribe to the given topic times out after 10 seconds, will return error.
-func Sub(topicToSub string) (SubscriptionHandler, error) {
-	handlers[topicToSub] = newHandler()
-	token := Client.Subscribe(topicToSub, 1, nil)
+func (h *DefaultHandler) Subscribe(topic string) error {
+	h.subbedTopics[topic] = ""
+	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
-		return nil, errors.New("failed to subscribe to topic: " + topicToSub)
+		return fmt.Errorf("failed to subscribe to topic: " + topic)
 	}
-	fmt.Printf("Subscribed to topic: %s\n", topicToSub)
-	return handlers[topicToSub], nil
+	fmt.Printf("Subscribed to topic: %s\n", topic)
+	return nil
 }
 
 // AsyncPayloadHandler listens on the channel of the given SubscriptionHandler Interface
