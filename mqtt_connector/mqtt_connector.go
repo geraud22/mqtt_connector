@@ -61,8 +61,7 @@ type SubscriptionHandler interface {
 	SendMessageToChannel(payload []byte)
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() chan error
-	ClosePayloadChannel()
-	CloseErrorChannel()
+	Close() error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 }
 
