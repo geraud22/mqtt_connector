@@ -12,6 +12,15 @@ import (
 	cfy "github.com/geraud22/config-from-yaml"
 )
 
+type SubscriptionHandler interface {
+	SendMessageToChannel(payload []byte)
+	GetPayloadChannel() <-chan []byte
+	GetErrorChannel() chan error
+	Close() error
+	Subscribe(topic string) error
+	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
+}
+
 func GetDefaultOpts() *mqtt.ClientOptions {
 	config := cfy.Get("config")
 	broker := config.GetString("MQTT.Broker")
@@ -34,15 +43,6 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 		return nil, fmt.Errorf("Error connecting to MQTT: %v", token.Error())
 	}
 	return client, nil
-}
-
-type SubscriptionHandler interface {
-	SendMessageToChannel(payload []byte)
-	GetPayloadChannel() <-chan []byte
-	GetErrorChannel() chan error
-	Close() error
-	Subscribe(topic string) error
-	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 }
 
 type DefaultHandler struct {
@@ -139,17 +139,15 @@ func (h *DefaultHandler) Subscribe(topic string) error {
 }
 
 // AsyncPayloadHandler listens on the channel of the given SubscriptionHandler Interface
-// and processes incoming MQTT payloads asynchronously using the provided processFunc.
+// and processes incoming MQTT payloads asynchronously.
 //
 // It continues running until the context is canceled.
 // Errors are sent to the handler's error channel.
 //
 // Parameters:
-// - ctx: A context.WithCancel used to control the lifetime of the handler. It should be cancelled to stop the handler gracefully.
-// - handler: A SubscriptionHandler that manages the channel through which payloads are received.
 // - numWorkers: Determines how many workers are spawned to handle payload processing.
 // - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
-func (h *Handler) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
+func (h *DefaultHandler) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
 	payloadCh := h.GetPayloadChannel()
 	workerTask := func() {
