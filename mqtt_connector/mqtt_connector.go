@@ -10,7 +10,35 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	cfy "github.com/geraud22/config-from-yaml"
 )
+
+// Default ConnectMqtt will get its connection information from config.yml file.
+func ConnectMqtt() (*mqtt.Client, error) {
+	config := cfy.Get("config")
+	broker := config.GetString("MQTT.Broker")
+	port := config.GetInt("MQTT.Port")
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", broker, port))
+	clientID := config.GetString("MQTT.ClientID")
+	username := config.GetString("MQTT.Username")
+	password := config.GetString("MQTT.Password")
+	opts.SetClientID(clientID)
+	opts.SetUsername(username)
+	opts.SetPassword(password)
+	opts.SetDefaultPublishHandler(messagePubHandler)
+	opts.SetKeepAlive(60 * time.Second)
+	opts.OnConnect = connectHandler
+	opts.OnConnectionLost = connectLostHandler
+	opts.SetDefaultPublishHandler(messagePubHandler)
+	opts.OnConnect = connectHandler
+	opts.OnConnectionLost = connectLostHandler
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return nil, fmt.Errorf("Error connecting to MQTT: %v", token.Error())
+	}
+	return &client, nil
+}
 
 var handlers = make(map[string]SubscriptionHandler)
 
@@ -54,24 +82,11 @@ var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err
 	fmt.Printf("Connection lost: %v\n", err)
 }
 
-// Connect is responsible for connecting the global mqtt.Client.
-// It will retrieve the connection information from the client project's config.yml
-func connect(opts *mqtt.ClientOptions) (*mqtt.Client, error) {
-	opts.SetDefaultPublishHandler(messagePubHandler)
-	opts.SetKeepAlive(60 * time.Second)
-	opts.OnConnect = connectHandler
-	opts.OnConnectionLost = connectLostHandler
-	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		return nil, fmt.Errorf("Error connecting to MQTT: %v", token.Error())
-	}
-	return &client, nil
-}
-
 type SubscriptionHandler interface {
 	SendMessageToChannel(payload []byte)
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() chan error
+	connect() error
 	Close() error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 }
@@ -80,10 +95,6 @@ type DefaultHandler struct {
 	client         *mqtt.Client
 	payloadChannel chan []byte
 	errorChannel   chan error
-}
-
-type MqttConnectionOpts struct {
-	broker, port, clientId, username, password string
 }
 
 func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
@@ -104,8 +115,8 @@ func (h *DefaultHandler) Close() error {
 	return nil
 }
 
-func NewDefaultHandler(s SubscriptionHandler, opts *mqtt.ClientOptions) (*DefaultHandler, error) {
-	client, err := connect(opts)
+func NewDefaultHandler() (*DefaultHandler, error) {
+	client, err := ConnectMqtt()
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
 	}
