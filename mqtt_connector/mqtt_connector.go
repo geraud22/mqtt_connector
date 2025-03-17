@@ -63,6 +63,7 @@ type SubscriptionHandler interface {
 	GetErrorChannel() chan error
 	ClosePayloadChannel()
 	CloseErrorChannel()
+	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 }
 
 type Handler struct {
@@ -82,11 +83,8 @@ func (h *Handler) GetErrorChannel() chan error {
 	return h.errorChannel
 }
 
-func (h *Handler) ClosePayloadChannel() {
+func (h *Handler) Close() {
 	close(h.payloadChannel)
-}
-
-func (h *Handler) CloseErrorChannel() {
 	close(h.errorChannel)
 }
 
@@ -150,9 +148,9 @@ func Sub(topicToSub string) (SubscriptionHandler, error) {
 // - handler: A SubscriptionHandler that manages the channel through which payloads are received.
 // - numWorkers: Determines how many workers are spawned to handle payload processing.
 // - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
-func AsyncPayloadHandler(ctx context.Context, handler SubscriptionHandler, numWorkers int, processFunc func([]byte) error) {
+func (h *Handler) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
-	payloadCh := handler.GetPayloadChannel()
+	payloadCh := h.GetPayloadChannel()
 	workerTask := func() {
 		defer wg.Done()
 		for {
@@ -163,7 +161,7 @@ func AsyncPayloadHandler(ctx context.Context, handler SubscriptionHandler, numWo
 				}
 				if err := processFunc(payload); err != nil {
 					select {
-					case handler.GetErrorChannel() <- err:
+					case h.GetErrorChannel() <- err:
 					case <-ctx.Done():
 						return
 					}
