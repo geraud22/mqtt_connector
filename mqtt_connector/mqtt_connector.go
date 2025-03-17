@@ -65,30 +65,36 @@ type SubscriptionHandler interface {
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 }
 
-type Handler struct {
+type DefaultHandler struct {
+	client         *mqtt.Client
 	payloadChannel chan []byte
 	errorChannel   chan error
 }
 
-func (h *Handler) SendMessageToChannel(payload []byte) {
+func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
 	h.payloadChannel <- payload
 }
 
-func (h *Handler) GetPayloadChannel() <-chan []byte {
+func (h *DefaultHandler) GetPayloadChannel() <-chan []byte {
 	return h.payloadChannel
 }
 
-func (h *Handler) GetErrorChannel() chan error {
+func (h *DefaultHandler) GetErrorChannel() chan error {
 	return h.errorChannel
 }
 
-func (h *Handler) Close() {
+func (h *DefaultHandler) Close() error {
 	close(h.payloadChannel)
 	close(h.errorChannel)
+	return nil
 }
 
-func newHandler() *Handler {
-	return &Handler{
+func NewDefaultHandler(s SubscriptionHandler, opts ConnectionOpts) (*DefaultHandler, error) {
+	client, err := connect(opts)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
+	}
+	return &DefaultHandler{
 		payloadChannel: make(chan []byte),
 		errorChannel:   make(chan error),
 	}
@@ -177,9 +183,8 @@ func (h *Handler) AsyncPayloadProcess(ctx context.Context, numWorkers int, proce
 	}
 	<-ctx.Done()
 	log.Println("payload handler received shutdown signal")
-	handler.ClosePayloadChannel()
+	h.Close()
 	wg.Wait()
-	handler.CloseErrorChannel()
 	log.Println("all workers stopped, error channel closed")
 }
 
