@@ -193,8 +193,8 @@ func (h *DefaultHandler) AsyncPayloadProcess(ctx context.Context, numWorkers int
 //
 // Returns:
 // - An error if something goes wrong during processing.
-func PayloadHandler(handler SubscriptionHandler, processFunc func([]byte) error) error {
-	payload := <-handler.GetPayloadChannel()
+func (h *DefaultHandler) PayloadHandler(processFunc func([]byte) error) error {
+	payload := <-h.GetPayloadChannel()
 	if err := processFunc(payload); err != nil {
 		return fmt.Errorf("error processing payload: %v", err)
 	}
