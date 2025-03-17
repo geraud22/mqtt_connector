@@ -12,8 +12,9 @@ import (
 	cfy "github.com/geraud22/config-from-yaml"
 )
 
-// Default ConnectMqtt will get its connection information from config.yml file.
-func ConnectMqtt() (mqtt.Client, error) {
+var SubbedTopics = make(map[string]string)
+
+func GetDefaultOpts() *mqtt.ClientOptions {
 	config := cfy.Get("config")
 	broker := config.GetString("MQTT.Broker")
 	port := config.GetInt("MQTT.Port")
@@ -25,13 +26,12 @@ func ConnectMqtt() (mqtt.Client, error) {
 	opts.SetClientID(clientID)
 	opts.SetUsername(username)
 	opts.SetPassword(password)
-	opts.SetDefaultPublishHandler(messagePubHandler)
 	opts.SetKeepAlive(60 * time.Second)
-	opts.OnConnect = connectHandler
-	opts.OnConnectionLost = connectLostHandler
-	opts.SetDefaultPublishHandler(messagePubHandler)
-	opts.OnConnect = connectHandler
-	opts.OnConnectionLost = connectLostHandler
+	return opts
+}
+
+// Default ConnectMqtt will get its connection information from config.yml file.
+func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		return nil, fmt.Errorf("Error connecting to MQTT: %v", token.Error())
@@ -59,7 +59,7 @@ func Match(wildcard, topic string) bool {
 
 var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
-	if handler, exists := handlers[msg.Topic()]; exists {
+	if SubbedTopics, exists := handlers[topic]; exists {
 		handler.SendMessageToChannel(msg.Payload())
 		return
 	}
@@ -89,10 +89,12 @@ type SubscriptionHandler interface {
 }
 
 type DefaultHandler struct {
-	client         mqtt.Client
-	payloadChannel chan []byte
-	errorChannel   chan error
-	subbedTopics   map[string]string
+	client             mqtt.Client
+	payloadChannel     chan []byte
+	errorChannel       chan error
+	messageHandler     mqtt.MessageHandler
+	connectHandler     mqtt.OnConnectHandler
+	connectLostHandler mqtt.ConnectionLostHandler
 }
 
 func (h *DefaultHandler) SendMessageToChannel(payload []byte) {
@@ -114,21 +116,25 @@ func (h *DefaultHandler) Close() error {
 }
 
 func NewDefaultHandler() (*DefaultHandler, error) {
-	client, err := ConnectMqtt()
+	h := DefaultHandler{
+		payloadChannel: make(chan []byte),
+		errorChannel:   make(chan error),
+	}
+	opts := GetDefaultOpts()
+	opts.SetDefaultPublishHandler(h.messageHandler)
+	opts.OnConnect = h.connectHandler
+	opts.OnConnectionLost = h.connectLostHandler
+	client, err := ConnectMqtt(opts)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
 	}
-	return &DefaultHandler{
-		client:         client,
-		payloadChannel: make(chan []byte),
-		errorChannel:   make(chan error),
-		subbedTopics:   make(map[string]string),
-	}, nil
+	h.client = client
+	return &h, nil
 }
 
 // Will subscribe to an mqtt topic.
 func (h *DefaultHandler) Subscribe(topic string) error {
-	h.subbedTopics[topic] = ""
+	SubbedTopics[topic] = ""
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return fmt.Errorf("failed to subscribe to topic: " + topic)
