@@ -39,8 +39,6 @@ func ConnectMqtt() (mqtt.Client, error) {
 	return client, nil
 }
 
-var handlers = make(map[string]SubscriptionHandler)
-
 func Match(wildcard, topic string) bool {
 	wildcardParts := strings.Split(wildcard, "/")
 	topicParts := strings.Split(topic, "/")
@@ -128,15 +126,7 @@ func NewDefaultHandler() (*DefaultHandler, error) {
 	}, nil
 }
 
-// Sub will subscribe to an MQTT topic, only if the client connection has already been established.
-//
-// Parameters:
-// - topicToSub: The string representing the MQTT topic to subscribe to.
-//
-// Returns:
-//   - SubscriptionHandler: An interface which provides a channel where incoming message payloads will be sent,
-//     via the package variable messagePubHandler
-//   - Error: If the request to subscribe to the given topic times out after 10 seconds, will return error.
+// Will subscribe to an mqtt topic.
 func (h *DefaultHandler) Subscribe(topic string) error {
 	h.subbedTopics[topic] = ""
 	token := h.client.Subscribe(topic, 1, nil)
