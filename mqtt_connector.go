@@ -112,7 +112,7 @@ func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 		h.SendMessageToChannel(msg.Payload())
 		return
 	}
-	for possibleWildcard, _ := range h.subbedTopics {
+	for possibleWildcard := range h.subbedTopics {
 		if h.match(possibleWildcard, topic) {
 			h.SendMessageToChannel(msg.Payload())
 			return
@@ -132,7 +132,7 @@ func (h *DefaultHandler) Subscribe(topic string) error {
 	h.subbedTopics[topic] = ""
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
-		return fmt.Errorf("failed to subscribe to topic: " + topic)
+		return fmt.Errorf("failed to subscribe to topic: %s", topic)
 	}
 	log.Printf("Subscribed to topic: %s", topic)
 	return nil
