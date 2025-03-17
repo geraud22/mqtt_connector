@@ -69,12 +69,12 @@ func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 	}
 }
 
-var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
-	fmt.Println("Client Connected")
+func (h *DefaultHandler) connectHandler(client mqtt.Client) {
+	log.Println("Client Connected")
 }
 
-var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
-	fmt.Printf("Connection lost: %v\n", err)
+func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
+	log.Printf("Connection lost: %v", err)
 }
 
 type SubscriptionHandler interface {
@@ -131,7 +131,7 @@ func NewDefaultHandler() (*DefaultHandler, error) {
 
 // Will subscribe to an mqtt topic.
 func (h *DefaultHandler) Subscribe(topic string) error {
-	SubbedTopics[topic] = ""
+	h.subbedTopics[topic] = ""
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return fmt.Errorf("failed to subscribe to topic: " + topic)
