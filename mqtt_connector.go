@@ -19,7 +19,7 @@ type SubscriptionHandler interface {
 	Close() error
 	Subscribe(topic string) error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
-	PayloadProcess(processFunc func([]byte) error)
+	PayloadProcess(processFunc func([]byte) error) error
 	GetClient() (mqtt.Client, error)
 }
 
