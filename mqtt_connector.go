@@ -56,7 +56,7 @@ type DefaultHandler struct {
 	subbedTopics   map[string]string
 }
 
-func NewDefaultHandler() (*DefaultHandler, error) {
+func NewDefaultHandler() (SubscriptionHandler, error) {
 	h := DefaultHandler{
 		payloadChannel: make(chan []byte),
 		errorChannel:   make(chan error),
