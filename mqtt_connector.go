@@ -191,18 +191,8 @@ func (h *DefaultHandler) AsyncPayloadProcess(ctx context.Context, numWorkers int
 	log.Println("all workers stopped, handler channels remain open.")
 }
 
-// PayloadHandler listens on the channel of the given SubscriptionHandler Interface
-// and processes the incoming MQTT payload using the provided processFunc.
-//
-// It will only process one payload before exiting.
-//
-// Parameters:
-// - handler: A SubscriptionHandler that manages the channel through which a payload is received.
-// - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
-//
-// Returns:
-// - An error if something goes wrong during processing.
-func (h *DefaultHandler) PayloadHandler(processFunc func([]byte) error) error {
+// PayloadProcess handles the first payload it receives, before exiting..
+func (h *DefaultHandler) PayloadProcess(processFunc func([]byte) error) error {
 	payload := <-h.GetPayloadChannel()
 	if err := processFunc(payload); err != nil {
 		return fmt.Errorf("error processing payload: %v", err)
