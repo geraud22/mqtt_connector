@@ -12,6 +12,8 @@ import (
 	cfy "github.com/geraud22/config-from-yaml"
 )
 
+var once sync.Once
+
 type SubscriptionHandler interface {
 	SendMessageToChannel(payload []byte)
 	GetPayloadChannel() <-chan []byte
@@ -85,8 +87,15 @@ func (h *DefaultHandler) GetErrorChannel() chan error {
 }
 
 func (h *DefaultHandler) Close() error {
-	close(h.payloadChannel)
-	close(h.errorChannel)
+	once.Do(func() {
+		close(h.payloadChannel)
+		close(h.errorChannel)
+	})
+	for _, topic := range h.subbedTopics {
+		if token := h.client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
+			return fmt.Errorf("error unsubscribing from topic: %s", topic)
+		}
+	}
 	h.client.Disconnect(250)
 	return nil
 }
