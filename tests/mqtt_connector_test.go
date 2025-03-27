@@ -1,11 +1,18 @@
 package tests
 
 import (
+	"testing"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/geraud22/mqtt_connector"
 )
+
+var dh = &mqtt_connector.DefaultHandler{
+	Client:          &MockMqttClient{},
+	PayloadChannels: make(map[string]chan []byte),
+	ErrorChannels:   make(map[string]chan error),
+}
 
 type MockToken struct{}
 
@@ -63,6 +70,25 @@ func (m *MockMqttClient) OptionsReader() mqtt.ClientOptionsReader {
 	return mqtt.ClientOptionsReader{}
 }
 
-var dh = mqtt_connector.DefaultHandler{
-	Client: &MockMqttClient{},
+func TestSubscribe(t *testing.T) {
+	tests := []struct {
+		name    string
+		topic   string
+		wantErr bool
+	}{
+		{
+			name:  "Successful Subscribe",
+			topic: "success",
+		},
+	}
+
+	for _, tt := range tests {
+		_, err := dh.Subscribe(tt.topic)
+		if tt.wantErr != (err != nil) {
+			t.Fatalf("%s failed: expected err: %v, got: %v", tt.name, tt.wantErr, err)
+		}
+		if _, ok := dh.PayloadChannels[tt.topic]; !ok {
+			t.Fatalf("%s channel is invalid", tt.topic)
+		}
+	}
 }
