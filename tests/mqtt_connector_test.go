@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -91,4 +92,25 @@ func TestSubscribe(t *testing.T) {
 			t.Fatalf("%s channel is invalid", tt.topic)
 		}
 	}
+}
+
+func TestPayloadProcess(t *testing.T) {
+	p, err := dh.Subscribe("someTopic")
+	if err != nil {
+		t.Fatalf("unexpected subscribe error: %v", err)
+	}
+	processFunc := func(_ []byte) error {
+		t.Log("processing...")
+		return nil
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		if err := p.PayloadProcess(
+			time.Duration(5*time.Second),
+			processFunc,
+		); err != nil {
+			t.Fatalf("error processing payload: %v", err)
+		}
+	}()
 }
