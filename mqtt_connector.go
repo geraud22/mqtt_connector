@@ -152,7 +152,11 @@ func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	h.PayloadChannels[topic] = make(chan []byte)
 	h.ErrorChannels[topic] = make(chan error)
 	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
-	return NewDefaultProcessor(clock.New(), h.PayloadChannels[topic], h.ErrorChannels[topic]), nil
+	p, err := NewDefaultProcessor(clock.New(), h.PayloadChannels[topic], h.ErrorChannels[topic])
+	if err != nil {
+		return nil, fmt.Errorf("error creating processor: %v", err)
+	}
+	return p, nil
 }
 
 type DefaultProcessor struct {
@@ -161,12 +165,15 @@ type DefaultProcessor struct {
 	Clock          clock.Clock
 }
 
-func NewDefaultProcessor(clock clock.Clock, payloadCh chan []byte, errCh chan error) *DefaultProcessor {
+func NewDefaultProcessor(clock clock.Clock, payloadCh chan []byte, errCh chan error) (*DefaultProcessor, error) {
+	if clock == nil {
+		return nil, fmt.Errorf("received nil clock")
+	}
 	return &DefaultProcessor{
 		PayloadChannel: payloadCh,
 		ErrorChannel:   errCh,
 		Clock:          clock,
-	}
+	}, nil
 }
 
 func (p *DefaultProcessor) GetPayloadChannel() <-chan []byte {
