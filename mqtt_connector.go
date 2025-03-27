@@ -15,17 +15,15 @@ import (
 var once sync.Once
 
 type MqttHandler interface {
-	SendMessageToChannel(topic string, payload []byte) error
-	GetPayloadChannel(topic string) (<-chan []byte, error)
-	GetErrorChannel(topic string) (<-chan error, error)
+	messageHandler(client mqtt.Client, msg mqtt.Message)
 	Close() error
-	Subscribe(topic string) error
+	Subscribe(topic string) (TopicProcessor, error)
 	GetClient() (mqtt.Client, error)
 }
 
 type TopicProcessor interface {
 	GetPayloadChannel() <-chan []byte
-	GetErrorChannel() chan error
+	GetErrorChannel() (chan error, error)
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 	PayloadProcess(processFunc func([]byte) error) error
 }
@@ -60,7 +58,7 @@ type DefaultHandler struct {
 	errorChannels   map[string]chan error
 }
 
-func NewDefaultHandler() (SubscriptionHandler, error) {
+func NewDefaultHandler() (MqttHandler, error) {
 	h := DefaultHandler{
 		payloadChannels: make(map[string]chan []byte, 0),
 		errorChannels:   make(map[string]chan error),
@@ -75,22 +73,6 @@ func NewDefaultHandler() (SubscriptionHandler, error) {
 	}
 	h.client = client
 	return &h, nil
-}
-
-func (h *DefaultHandler) SendMessageToChannel(topic string, payload []byte) error {
-	if _, ok := h.payloadChannels[topic]; !ok {
-		return fmt.Errorf("topic channel doesn't exist: %s", topic)
-	}
-	h.payloadChannels[topic] <- payload
-	return nil
-}
-
-func (h *DefaultHandler) GetPayloadChannel() <-chan []byte {
-	return h.payloadChannel
-}
-
-func (h *DefaultHandler) GetErrorChannel() chan error {
-	return h.errorChannel
 }
 
 func (h *DefaultHandler) Close() error {
@@ -112,13 +94,16 @@ func (h *DefaultHandler) Close() error {
 }
 
 func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
-	if h.client.IsConnected() {
-		return h.client, nil
+	if !h.client.IsConnected() {
+		return nil, fmt.Errorf("client not connected")
 	}
-	return nil, fmt.Errorf("client not connected")
+	return h.client, nil
 }
 
 func (h *DefaultHandler) match(wildcard, topic string) bool {
+	if wildcard == topic {
+		return true
+	}
 	wildcardParts := strings.Split(wildcard, "/")
 	topicParts := strings.Split(topic, "/")
 	if len(wildcardParts) != len(topicParts) {
@@ -138,13 +123,12 @@ func (h *DefaultHandler) match(wildcard, topic string) bool {
 
 func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
-	if _, exists := h.subbedTopics[topic]; exists {
-		h.SendMessageToChannel(msg.Payload())
-		return
+	if _, ok := h.payloadChannels[topic]; ok {
+		h.payloadChannels[topic] <- msg.Payload()
 	}
-	for possibleWildcard := range h.subbedTopics {
+	for possibleWildcard := range h.payloadChannels {
 		if h.match(possibleWildcard, topic) {
-			h.SendMessageToChannel(msg.Payload())
+			h.payloadChannels[topic] <- msg.Payload()
 			return
 		}
 	}
@@ -181,11 +165,14 @@ func (p *DefaultProcessor) GetPayloadChannel() <-chan []byte {
 	return p.payloadChannel
 }
 
-func (p *DefaultProcessor) GetErrorChannel() chan error {
-	return p.errorChannel
+func (p *DefaultProcessor) GetErrorChannel() (chan error, error) {
+	if p.errorChannel == nil {
+		return nil, fmt.Errorf("error channel is nil")
+	}
+	return p.errorChannel, nil
 }
 
-// AsyncPayloadHandler listens on the channel of the given SubscriptionHandler Interface
+// AsyncPayloadHandler listens on the channel of the given MqttHandler Interface
 // and processes incoming MQTT payloads asynchronously.
 //
 // It continues running until the context is canceled.
@@ -205,8 +192,12 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 					return
 				}
 				if err := processFunc(payload); err != nil {
+					errCh, errGet := p.GetErrorChannel()
+					if errGet != nil {
+						return
+					}
 					select {
-					case p.GetErrorChannel() <- err:
+					case errCh <- err:
 					case <-ctx.Done():
 						return
 					}
