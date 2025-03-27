@@ -25,7 +25,7 @@ type TopicProcessor interface {
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() (chan error, error)
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
-	PayloadProcess(processFunc func([]byte) error) error
+	PayloadProcess(timeout time.Duration, processFunc func([]byte) error) error
 }
 
 func GetDefaultOpts() *mqtt.ClientOptions {
@@ -172,15 +172,15 @@ func (p *DefaultProcessor) GetErrorChannel() (chan error, error) {
 	return p.errorChannel, nil
 }
 
-// AsyncPayloadHandler listens on the channel of the given MqttHandler Interface
+// AsyncPayloadHandler listens on the TopicProcessor payload channel
 // and processes incoming MQTT payloads asynchronously.
 //
 // It continues running until the context is canceled.
-// Errors are sent to the handler's error channel.
+// Errors are sent to the TopicProcessor's error channel.
 //
 // Parameters:
 // - numWorkers: Determines how many workers are spawned to handle payload processing.
-// - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
+// - processFunc: A client-defined function that defines what to do with a received payload.
 func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
 	workerTask := func() {
@@ -218,7 +218,7 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 	log.Println("all workers stopped, handler channels remain open.")
 }
 
-// PayloadProcess handles the first payload it receives, before exiting..
+// PayloadProcess handles the first payload it receives, before exiting.
 func (p *DefaultProcessor) PayloadProcess(timeout time.Duration, processFunc func([]byte) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
