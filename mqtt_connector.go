@@ -14,15 +14,18 @@ import (
 
 var once sync.Once
 
-type SubscriptionHandler interface {
+type MqttHandler interface {
 	SendMessageToChannel(topic string, payload []byte) error
-	GetPayloadChannel() <-chan []byte
-	GetErrorChannel() chan error
+	GetPayloadChannel(topic string) (<-chan []byte, error)
+	GetErrorChannel(topic string) (<-chan error, error)
 	Close() error
 	Subscribe(topic string) error
+	GetClient() (mqtt.Client, error)
+}
+
+type TopicProcessor interface {
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 	PayloadProcess(processFunc func([]byte) error) error
-	GetClient() (mqtt.Client, error)
 }
 
 func GetDefaultOpts() *mqtt.ClientOptions {
@@ -52,13 +55,13 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 type DefaultHandler struct {
 	client          mqtt.Client
 	payloadChannels map[string]chan []byte
-	errorChannel    chan error
+	errorChannels   map[string]chan error
 }
 
 func NewDefaultHandler() (SubscriptionHandler, error) {
 	h := DefaultHandler{
 		payloadChannels: make(map[string]chan []byte, 0),
-		errorChannel:    make(chan error),
+		errorChannels:   make(map[string]chan error),
 	}
 	opts := GetDefaultOpts()
 	opts.SetDefaultPublishHandler(h.messageHandler)
@@ -149,14 +152,23 @@ func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
 	log.Printf("Connection lost: %v", err)
 }
 
-func (h *DefaultHandler) Subscribe(topic string) error {
+func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
-		return fmt.Errorf("failed to subscribe to topic: %s", topic)
+		return nil, fmt.Errorf("failed to subscribe to topic: %s", topic)
 	}
 	h.payloadChannels[topic] = make(chan []byte)
+	h.errorChannels[topic] = make(chan error)
 	log.Printf("Subscribed to topic: %s", topic)
-	return nil
+	return &DefaultProcessor{
+		payloadChannel: h.payloadChannels[topic],
+		errorChannel:   h.errorChannels[topic],
+	}, nil
+}
+
+type DefaultProcessor struct {
+	payloadChannel chan []byte
+	errorChannel   chan error
 }
 
 // AsyncPayloadHandler listens on the channel of the given SubscriptionHandler Interface
@@ -168,7 +180,7 @@ func (h *DefaultHandler) Subscribe(topic string) error {
 // Parameters:
 // - numWorkers: Determines how many workers are spawned to handle payload processing.
 // - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
-func (h *DefaultHandler) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
+func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
 	payloadCh := h.GetPayloadChannel()
 	workerTask := func() {
@@ -203,7 +215,7 @@ func (h *DefaultHandler) AsyncPayloadProcess(ctx context.Context, numWorkers int
 }
 
 // PayloadProcess handles the first payload it receives, before exiting..
-func (h *DefaultHandler) PayloadProcess(processFunc func([]byte) error) error {
+func (p *DefaultProcessor) PayloadProcess(processFunc func([]byte) error) error {
 	payload := <-h.GetPayloadChannel()
 	if err := processFunc(payload); err != nil {
 		return fmt.Errorf("error processing payload: %v", err)
