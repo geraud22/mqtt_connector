@@ -151,25 +151,25 @@ func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	h.ErrorChannels[topic] = make(chan error)
 	log.Printf("Subscribed to topic: %s", topic)
 	return &DefaultProcessor{
-		payloadChannel: h.PayloadChannels[topic],
-		errorChannel:   h.ErrorChannels[topic],
+		PayloadChannel: h.PayloadChannels[topic],
+		ErrorChannel:   h.ErrorChannels[topic],
 	}, nil
 }
 
 type DefaultProcessor struct {
-	payloadChannel chan []byte
-	errorChannel   chan error
+	PayloadChannel chan []byte
+	ErrorChannel   chan error
 }
 
 func (p *DefaultProcessor) GetPayloadChannel() <-chan []byte {
-	return p.payloadChannel
+	return p.PayloadChannel
 }
 
 func (p *DefaultProcessor) GetErrorChannel() (chan error, error) {
-	if p.errorChannel == nil {
+	if p.ErrorChannel == nil {
 		return nil, fmt.Errorf("error channel is nil")
 	}
-	return p.errorChannel, nil
+	return p.ErrorChannel, nil
 }
 
 // AsyncPayloadHandler listens on the TopicProcessor payload channel

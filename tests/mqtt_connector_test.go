@@ -95,22 +95,27 @@ func TestSubscribe(t *testing.T) {
 }
 
 func TestPayloadProcess(t *testing.T) {
-	p, err := dh.Subscribe("someTopic")
-	if err != nil {
-		t.Fatalf("unexpected subscribe error: %v", err)
+	testErrCh := make(chan error, 1)
+	p := &mqtt_connector.DefaultProcessor{
+		PayloadChannel: make(chan []byte, 1),
+		ErrorChannel:   make(chan error, 1),
 	}
 	processFunc := func(_ []byte) error {
-		t.Log("processing...")
 		return nil
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		if err := p.PayloadProcess(
-			time.Duration(5*time.Second),
-			processFunc,
-		); err != nil {
-			t.Fatalf("error processing payload: %v", err)
-		}
+		defer wg.Done()
+		err := p.PayloadProcess(time.Duration(5*time.Second), processFunc)
+		testErrCh <- err
 	}()
+	p.PayloadChannel <- []byte("test data")
+	wg.Wait()
+	close(testErrCh)
+	for err := range testErrCh {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
 }
