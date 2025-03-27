@@ -94,15 +94,19 @@ func (h *DefaultHandler) GetErrorChannel() chan error {
 }
 
 func (h *DefaultHandler) Close() error {
-	once.Do(func() {
-		close(h.payloadChannel)
-		close(h.errorChannel)
-	})
-	for _, topic := range h.subbedTopics {
+	for topic := range h.payloadChannels {
 		if token := h.client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
 			return fmt.Errorf("error unsubscribing from topic: %s", topic)
 		}
 	}
+	once.Do(func() {
+		for _, c := range h.payloadChannels {
+			close(c)
+		}
+		for _, c := range h.errorChannels {
+			close(c)
+		}
+	})
 	h.client.Disconnect(250)
 	return nil
 }
