@@ -100,7 +100,7 @@ func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
 	return h.Client, nil
 }
 
-func (h *DefaultHandler) match(wildcard, topic string) bool {
+func (h *DefaultHandler) Match(wildcard, topic string) bool {
 	if wildcard == topic {
 		return true
 	}
@@ -127,7 +127,7 @@ func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 		h.PayloadChannels[topic] <- msg.Payload()
 	}
 	for possibleWildcard := range h.PayloadChannels {
-		if h.match(possibleWildcard, topic) {
+		if h.Match(possibleWildcard, topic) {
 			h.PayloadChannels[topic] <- msg.Payload()
 			return
 		}
@@ -135,11 +135,11 @@ func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 }
 
 func (h *DefaultHandler) connectHandler(client mqtt.Client) {
-	log.Println("Client Connected")
+	log.Println("Mqtt Connector - Client Connected")
 }
 
 func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
-	log.Printf("Connection lost: %v", err)
+	log.Printf("Mqtt Connector - Connection lost: %v", err)
 }
 
 func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
@@ -149,7 +149,7 @@ func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	}
 	h.PayloadChannels[topic] = make(chan []byte)
 	h.ErrorChannels[topic] = make(chan error)
-	log.Printf("Subscribed to topic: %s", topic)
+	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
 	return &DefaultProcessor{
 		PayloadChannel: h.PayloadChannels[topic],
 		ErrorChannel:   h.ErrorChannels[topic],
@@ -213,9 +213,9 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 		go workerTask()
 	}
 	<-ctx.Done()
-	log.Println("payload handler received shutdown signal")
+	log.Println("Mqtt Connector - payload handler received shutdown signal")
 	wg.Wait()
-	log.Println("all workers stopped, handler channels remain open.")
+	log.Println("Mqtt Connector - all workers stopped.")
 }
 
 // PayloadProcess handles the first payload it receives, before exiting.

@@ -142,3 +142,49 @@ func TestPayloadProcess(t *testing.T) {
 		close(p.ErrorChannel)
 	}
 }
+
+func TestMatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		wildcard string
+		topic    string
+		want     bool
+	}{
+		{
+			name:     "match identical",
+			wildcard: "identical",
+			topic:    "identical",
+			want:     true,
+		},
+		{
+			name:     "match wildcard",
+			wildcard: "match/+/wildcard",
+			topic:    "match/some/wildcard",
+			want:     true,
+		},
+		{
+			name:     "no match",
+			wildcard: "no",
+			topic:    "match",
+			want:     false,
+		},
+		{
+			name:     "no match wildcard",
+			wildcard: "no/+",
+			topic:    "no/match/wildcard",
+			want:     false,
+		},
+		{
+			name:     "no match different part lengths",
+			wildcard: "part/1",
+			topic:    "part/1/2",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		if ok := dh.Match(tt.wildcard, tt.topic); ok != tt.want {
+			t.Fatalf("%s failed: expected %v, got %v", tt.name, tt.want, ok)
+		}
+	}
+}
