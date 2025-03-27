@@ -219,10 +219,16 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 }
 
 // PayloadProcess handles the first payload it receives, before exiting..
-func (p *DefaultProcessor) PayloadProcess(processFunc func([]byte) error) error {
-	payload := <-p.GetPayloadChannel()
-	if err := processFunc(payload); err != nil {
-		return fmt.Errorf("error processing payload: %v", err)
+func (p *DefaultProcessor) PayloadProcess(timeout time.Duration, processFunc func([]byte) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	select {
+	case payload := <-p.GetPayloadChannel():
+		if err := processFunc(payload); err != nil {
+			return fmt.Errorf("error processing payload: %v", err)
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("operation time out before payload received: %v", ctx.Err())
 	}
 	return nil
 }
