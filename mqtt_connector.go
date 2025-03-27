@@ -53,15 +53,15 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 }
 
 type DefaultHandler struct {
-	client          mqtt.Client
-	payloadChannels map[string]chan []byte
-	errorChannels   map[string]chan error
+	Client          mqtt.Client
+	PayloadChannels map[string]chan []byte
+	ErrorChannels   map[string]chan error
 }
 
 func NewDefaultHandler() (MqttHandler, error) {
 	h := DefaultHandler{
-		payloadChannels: make(map[string]chan []byte, 0),
-		errorChannels:   make(map[string]chan error),
+		PayloadChannels: make(map[string]chan []byte, 0),
+		ErrorChannels:   make(map[string]chan error),
 	}
 	opts := GetDefaultOpts()
 	opts.SetDefaultPublishHandler(h.messageHandler)
@@ -71,33 +71,33 @@ func NewDefaultHandler() (MqttHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
 	}
-	h.client = client
+	h.Client = client
 	return &h, nil
 }
 
 func (h *DefaultHandler) Close() error {
-	for topic := range h.payloadChannels {
-		if token := h.client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
+	for topic := range h.PayloadChannels {
+		if token := h.Client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
 			return fmt.Errorf("error unsubscribing from topic: %s", topic)
 		}
 	}
 	once.Do(func() {
-		for _, c := range h.payloadChannels {
+		for _, c := range h.PayloadChannels {
 			close(c)
 		}
-		for _, c := range h.errorChannels {
+		for _, c := range h.ErrorChannels {
 			close(c)
 		}
 	})
-	h.client.Disconnect(250)
+	h.Client.Disconnect(250)
 	return nil
 }
 
 func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
-	if !h.client.IsConnected() {
+	if !h.Client.IsConnected() {
 		return nil, fmt.Errorf("client not connected")
 	}
-	return h.client, nil
+	return h.Client, nil
 }
 
 func (h *DefaultHandler) match(wildcard, topic string) bool {
@@ -123,12 +123,12 @@ func (h *DefaultHandler) match(wildcard, topic string) bool {
 
 func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
-	if _, ok := h.payloadChannels[topic]; ok {
-		h.payloadChannels[topic] <- msg.Payload()
+	if _, ok := h.PayloadChannels[topic]; ok {
+		h.PayloadChannels[topic] <- msg.Payload()
 	}
-	for possibleWildcard := range h.payloadChannels {
+	for possibleWildcard := range h.PayloadChannels {
 		if h.match(possibleWildcard, topic) {
-			h.payloadChannels[topic] <- msg.Payload()
+			h.PayloadChannels[topic] <- msg.Payload()
 			return
 		}
 	}
@@ -143,16 +143,16 @@ func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
 }
 
 func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
-	token := h.client.Subscribe(topic, 1, nil)
+	token := h.Client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return nil, fmt.Errorf("failed to subscribe to topic: %s", topic)
 	}
-	h.payloadChannels[topic] = make(chan []byte)
-	h.errorChannels[topic] = make(chan error)
+	h.PayloadChannels[topic] = make(chan []byte)
+	h.ErrorChannels[topic] = make(chan error)
 	log.Printf("Subscribed to topic: %s", topic)
 	return &DefaultProcessor{
-		payloadChannel: h.payloadChannels[topic],
-		errorChannel:   h.errorChannels[topic],
+		payloadChannel: h.PayloadChannels[topic],
+		errorChannel:   h.ErrorChannels[topic],
 	}, nil
 }
 
