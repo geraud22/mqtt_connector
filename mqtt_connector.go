@@ -15,10 +15,11 @@ import (
 var once sync.Once
 
 type MqttHandler interface {
-	messageHandler(client mqtt.Client, msg mqtt.Message)
+	MessageHandler(client mqtt.Client, msg mqtt.Message)
 	Close() error
 	Subscribe(topic string) (TopicProcessor, error)
 	GetClient() (mqtt.Client, error)
+	WildCardMatch(wildcard, topic string) bool
 }
 
 type TopicProcessor interface {
@@ -64,7 +65,7 @@ func NewDefaultHandler() (MqttHandler, error) {
 		ErrorChannels:   make(map[string]chan error),
 	}
 	opts := GetDefaultOpts()
-	opts.SetDefaultPublishHandler(h.messageHandler)
+	opts.SetDefaultPublishHandler(h.MessageHandler)
 	opts.OnConnect = h.connectHandler
 	opts.OnConnectionLost = h.connectLostHandler
 	client, err := ConnectMqtt(opts)
@@ -100,7 +101,7 @@ func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
 	return h.Client, nil
 }
 
-func (h *DefaultHandler) Match(wildcard, topic string) bool {
+func (h *DefaultHandler) WildCardMatch(wildcard, topic string) bool {
 	if wildcard == topic {
 		return true
 	}
@@ -121,13 +122,13 @@ func (h *DefaultHandler) Match(wildcard, topic string) bool {
 	return true
 }
 
-func (h *DefaultHandler) messageHandler(client mqtt.Client, msg mqtt.Message) {
+func (h *DefaultHandler) MessageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
 	if _, ok := h.PayloadChannels[topic]; ok {
 		h.PayloadChannels[topic] <- msg.Payload()
 	}
 	for possibleWildcard := range h.PayloadChannels {
-		if h.Match(possibleWildcard, topic) {
+		if h.WildCardMatch(possibleWildcard, topic) {
 			h.PayloadChannels[topic] <- msg.Payload()
 			return
 		}

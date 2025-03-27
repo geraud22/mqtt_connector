@@ -183,7 +183,7 @@ func TestMatch(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if ok := dh.Match(tt.wildcard, tt.topic); ok != tt.want {
+		if ok := dh.WildCardMatch(tt.wildcard, tt.topic); ok != tt.want {
 			t.Fatalf("%s failed: expected %v, got %v", tt.name, tt.want, ok)
 		}
 	}
