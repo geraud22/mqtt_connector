@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimonomid/clock"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	cfy "github.com/geraud22/config-from-yaml"
 )
@@ -151,15 +152,21 @@ func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	h.PayloadChannels[topic] = make(chan []byte)
 	h.ErrorChannels[topic] = make(chan error)
 	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
-	return &DefaultProcessor{
-		PayloadChannel: h.PayloadChannels[topic],
-		ErrorChannel:   h.ErrorChannels[topic],
-	}, nil
+	return NewDefaultProcessor(clock.New(), h.PayloadChannels[topic], h.ErrorChannels[topic]), nil
 }
 
 type DefaultProcessor struct {
 	PayloadChannel chan []byte
 	ErrorChannel   chan error
+	Clock          clock.Clock
+}
+
+func NewDefaultProcessor(clock clock.Clock, payloadCh chan []byte, errCh chan error) *DefaultProcessor {
+	return &DefaultProcessor{
+		PayloadChannel: payloadCh,
+		ErrorChannel:   errCh,
+		Clock:          clock,
+	}
 }
 
 func (p *DefaultProcessor) GetPayloadChannel() <-chan []byte {

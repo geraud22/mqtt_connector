@@ -3,6 +3,7 @@ module github.com/geraud22/mqtt_connector
 go 1.23.0
 
 require (
+	github.com/dimonomid/clock v0.0.0-20250112175642-cbee01fcea40
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/geraud22/config-from-yaml v0.0.0-20240812074530-6c59d4f5f454
 )
