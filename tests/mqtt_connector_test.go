@@ -95,27 +95,54 @@ func TestSubscribe(t *testing.T) {
 }
 
 func TestPayloadProcess(t *testing.T) {
-	testErrCh := make(chan error, 1)
-	p := &mqtt_connector.DefaultProcessor{
-		PayloadChannel: make(chan []byte, 1),
-		ErrorChannel:   make(chan error, 1),
-	}
+	p := &mqtt_connector.DefaultProcessor{}
 	processFunc := func(_ []byte) error {
 		return nil
 	}
+	tests := []struct {
+		name             string
+		testErrCh        chan error
+		payloadCh        chan []byte
+		errCh            chan error
+		processTimeout   time.Duration
+		payloadSendDelay time.Duration
+		wantErr          bool
+	}{
+		{
+			name:           "successful payload process",
+			testErrCh:      make(chan error, 1),
+			payloadCh:      make(chan []byte, 1),
+			errCh:          make(chan error, 1),
+			processTimeout: time.Duration(5 * time.Second),
+		},
+		{
+			name:             "payload process timeout before payload received",
+			testErrCh:        make(chan error, 1),
+			payloadCh:        make(chan []byte, 1),
+			errCh:            make(chan error, 1),
+			processTimeout:   time.Duration(1 * time.Millisecond),
+			payloadSendDelay: time.Duration(5 * time.Millisecond),
+			wantErr:          true,
+		},
+	}
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err := p.PayloadProcess(time.Duration(5*time.Second), processFunc)
-		testErrCh <- err
-	}()
-	p.PayloadChannel <- []byte("test data")
-	wg.Wait()
-	close(testErrCh)
-	for err := range testErrCh {
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	for _, tt := range tests {
+		p.PayloadChannel = tt.payloadCh
+		p.ErrorChannel = tt.errCh
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := p.PayloadProcess(tt.processTimeout, processFunc)
+			tt.testErrCh <- err
+		}()
+		time.Sleep(tt.payloadSendDelay)
+		p.PayloadChannel <- []byte("test data")
+		wg.Wait()
+		close(tt.testErrCh)
+		for err := range tt.testErrCh {
+			if tt.wantErr != (err != nil) {
+				t.Fatalf("%s failed: expected error: %v, got: %v", tt.name, tt.wantErr, err)
+			}
 		}
 	}
 }
