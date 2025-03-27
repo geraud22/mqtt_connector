@@ -24,6 +24,8 @@ type MqttHandler interface {
 }
 
 type TopicProcessor interface {
+	GetPayloadChannel() <-chan []byte
+	GetErrorChannel() chan error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 	PayloadProcess(processFunc func([]byte) error) error
 }
@@ -171,6 +173,14 @@ type DefaultProcessor struct {
 	errorChannel   chan error
 }
 
+func (p *DefaultProcessor) GetPayloadChannel() <-chan []byte {
+	return p.payloadChannel
+}
+
+func (p *DefaultProcessor) GetErrorChannel() chan error {
+	return p.errorChannel
+}
+
 // AsyncPayloadHandler listens on the channel of the given SubscriptionHandler Interface
 // and processes incoming MQTT payloads asynchronously.
 //
@@ -182,18 +192,17 @@ type DefaultProcessor struct {
 // - processFunc: A client-defined function that takes a byte slice (representing the MQTT payload) and processes it.
 func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
-	payloadCh := h.GetPayloadChannel()
 	workerTask := func() {
 		defer wg.Done()
 		for {
 			select {
-			case payload, ok := <-payloadCh:
+			case payload, ok := <-p.GetPayloadChannel():
 				if !ok {
 					return
 				}
 				if err := processFunc(payload); err != nil {
 					select {
-					case h.GetErrorChannel() <- err:
+					case p.GetErrorChannel() <- err:
 					case <-ctx.Done():
 						return
 					}
@@ -216,7 +225,7 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 
 // PayloadProcess handles the first payload it receives, before exiting..
 func (p *DefaultProcessor) PayloadProcess(processFunc func([]byte) error) error {
-	payload := <-h.GetPayloadChannel()
+	payload := <-p.GetPayloadChannel()
 	if err := processFunc(payload); err != nil {
 		return fmt.Errorf("error processing payload: %v", err)
 	}
