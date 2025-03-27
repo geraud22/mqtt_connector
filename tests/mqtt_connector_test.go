@@ -102,8 +102,6 @@ func TestPayloadProcess(t *testing.T) {
 	tests := []struct {
 		name             string
 		testErrCh        chan error
-		payloadCh        chan []byte
-		errCh            chan error
 		processTimeout   time.Duration
 		payloadSendDelay time.Duration
 		wantErr          bool
@@ -111,15 +109,11 @@ func TestPayloadProcess(t *testing.T) {
 		{
 			name:           "successful payload process",
 			testErrCh:      make(chan error, 1),
-			payloadCh:      make(chan []byte, 1),
-			errCh:          make(chan error, 1),
 			processTimeout: time.Duration(5 * time.Second),
 		},
 		{
 			name:             "payload process timeout before payload received",
 			testErrCh:        make(chan error, 1),
-			payloadCh:        make(chan []byte, 1),
-			errCh:            make(chan error, 1),
 			processTimeout:   time.Duration(1 * time.Millisecond),
 			payloadSendDelay: time.Duration(5 * time.Millisecond),
 			wantErr:          true,
@@ -127,8 +121,8 @@ func TestPayloadProcess(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for _, tt := range tests {
-		p.PayloadChannel = tt.payloadCh
-		p.ErrorChannel = tt.errCh
+		p.PayloadChannel = make(chan []byte, 1)
+		p.ErrorChannel = make(chan error, 1)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -144,5 +138,7 @@ func TestPayloadProcess(t *testing.T) {
 				t.Fatalf("%s failed: expected error: %v, got: %v", tt.name, tt.wantErr, err)
 			}
 		}
+		close(p.PayloadChannel)
+		close(p.ErrorChannel)
 	}
 }
