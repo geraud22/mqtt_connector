@@ -15,7 +15,7 @@ import (
 var once sync.Once
 
 type SubscriptionHandler interface {
-	SendMessageToChannel(topic string, payload []byte)
+	SendMessageToChannel(topic string, payload []byte) error
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() chan error
 	Close() error
@@ -50,17 +50,15 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 }
 
 type DefaultHandler struct {
-	client         mqtt.Client
-	payloadChannel map[string]chan []byte
-	errorChannel   chan error
-	subbedTopics   map[string]string
+	client          mqtt.Client
+	payloadChannels map[string]chan []byte
+	errorChannel    chan error
 }
 
 func NewDefaultHandler() (SubscriptionHandler, error) {
 	h := DefaultHandler{
-		payloadChannel: make(map[string]chan []byte, 0),
-		errorChannel:   make(chan error),
-		subbedTopics:   make(map[string]string),
+		payloadChannels: make(map[string]chan []byte, 0),
+		errorChannel:    make(chan error),
 	}
 	opts := GetDefaultOpts()
 	opts.SetDefaultPublishHandler(h.messageHandler)
@@ -75,10 +73,10 @@ func NewDefaultHandler() (SubscriptionHandler, error) {
 }
 
 func (h *DefaultHandler) SendMessageToChannel(topic string, payload []byte) error {
-	if _, ok := h.payloadChannel[topic]; !ok {
+	if _, ok := h.payloadChannels[topic]; !ok {
 		return fmt.Errorf("topic channel doesn't exist: %s", topic)
 	}
-	h.payloadChannel[topic] <- payload
+	h.payloadChannels[topic] <- payload
 	return nil
 }
 
@@ -152,11 +150,11 @@ func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
 }
 
 func (h *DefaultHandler) Subscribe(topic string) error {
-	h.subbedTopics[topic] = ""
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return fmt.Errorf("failed to subscribe to topic: %s", topic)
 	}
+	h.payloadChannels[topic] = make(chan []byte)
 	log.Printf("Subscribed to topic: %s", topic)
 	return nil
 }
