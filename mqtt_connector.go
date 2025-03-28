@@ -12,8 +12,6 @@ import (
 	cfy "github.com/geraud22/config-from-yaml"
 )
 
-var once sync.Once
-
 type ProcessFunc func([]byte) error
 
 type MqttHandler interface {
@@ -154,10 +152,11 @@ func (h *DefaultHandler) match(wildcard, topic string) bool {
 type defaultProcessor struct {
 	payloadChannel chan []byte
 	errorChannel   chan error
+	once           sync.Once
 }
 
 func (p *defaultProcessor) Close() error {
-	once.Do(func() {
+	p.once.Do(func() {
 		close(p.payloadChannel)
 		close(p.errorChannel)
 	})
