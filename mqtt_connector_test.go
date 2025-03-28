@@ -187,3 +187,33 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestGetErrorChannel(t *testing.T) {
+	p := &defaultProcessor{}
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{
+			name:    "successful channel retrieval",
+			wantErr: false,
+		},
+		{
+			name:    "unsuccessful channel retrieval",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		var err error
+		if !tt.wantErr {
+			p.errorChannel = make(chan error, 1)
+			defer close(p.errorChannel)
+		}
+		_, err = p.GetErrorChannel()
+		if tt.wantErr != (err != nil) {
+			t.Fatalf("%s FAILED: wantErr: %v, err: %v", tt.name, tt.wantErr, err)
+		}
+		p.errorChannel = nil
+	}
+}

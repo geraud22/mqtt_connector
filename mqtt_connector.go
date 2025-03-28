@@ -18,14 +18,15 @@ type ProcessFunc func([]byte) error
 
 type MqttHandler interface {
 	Close() error
-	MessageHandler(client mqtt.Client, msg mqtt.Message)
-	Subscribe(topic string) (TopicProcessor, error)
 	GetClient() (mqtt.Client, error)
+	Subscribe(topic string) (TopicProcessor, error)
+	MessageHandler(client mqtt.Client, msg mqtt.Message)
 }
 
 type TopicProcessor interface {
 	Close() error
 	SendPayload(payload []byte)
+	GetErrorChannel() (chan error, error)
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc ProcessFunc)
 	PayloadProcess(ctx context.Context, processFunc ProcessFunc) error
 }
@@ -85,6 +86,13 @@ func (h *DefaultHandler) Close() error {
 	return nil
 }
 
+func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
+	if !h.client.IsConnected() {
+		return nil, fmt.Errorf("client not connected")
+	}
+	return h.client, nil
+}
+
 func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
@@ -122,13 +130,6 @@ func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
 	log.Printf("Mqtt Connector - Connection lost: %v", err)
 }
 
-func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
-	if !h.client.IsConnected() {
-		return nil, fmt.Errorf("client not connected")
-	}
-	return h.client, nil
-}
-
 func (h *DefaultHandler) match(wildcard, topic string) bool {
 	if wildcard == topic {
 		return true
@@ -163,18 +164,18 @@ func (p *defaultProcessor) Close() error {
 	return nil
 }
 
-func (p *defaultProcessor) getErrorChannel() (chan error, error) {
-	if p.errorChannel == nil {
-		return nil, fmt.Errorf("error channel is nil")
-	}
-	return p.errorChannel, nil
-}
-
 func (p *defaultProcessor) SendPayload(payload []byte) {
 	if p.payloadChannel == nil {
 		return
 	}
 	p.payloadChannel <- payload
+}
+
+func (p *defaultProcessor) GetErrorChannel() (chan error, error) {
+	if p.errorChannel == nil {
+		return nil, fmt.Errorf("error channel is nil")
+	}
+	return p.errorChannel, nil
 }
 
 // AsyncPayloadHandler listens on the TopicProcessor payload channel
@@ -197,7 +198,7 @@ func (p *defaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 					return
 				}
 				if err := processFunc(payload); err != nil {
-					errCh, closedChErr := p.getErrorChannel()
+					errCh, closedChErr := p.GetErrorChannel()
 					if closedChErr != nil {
 						return
 					}
