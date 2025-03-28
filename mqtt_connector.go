@@ -19,13 +19,12 @@ type MqttHandler interface {
 	Close() error
 	Subscribe(topic string) (TopicProcessor, error)
 	GetClient() (mqtt.Client, error)
-	WildCardMatch(wildcard, topic string) bool
 }
 
 // Note: TopicProcessor is spawned by MqttHandler Subscribe. Therefore, MqttHandler remains responsible for closing spawned TopicProcessors.
 type TopicProcessor interface {
-	GetPayloadChannel() <-chan []byte
-	GetErrorChannel() (chan error, error)
+	getPayloadChannel() <-chan []byte
+	getErrorChannel() (chan error, error)
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
 	PayloadProcess(ctx context.Context, processFunc func([]byte) error) error
 }
@@ -105,20 +104,19 @@ func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	h.PayloadChannels[topic] = make(chan []byte)
 	h.ErrorChannels[topic] = make(chan error)
 	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
-	p, err := NewDefaultProcessor(h.PayloadChannels[topic], h.ErrorChannels[topic])
-	if err != nil {
-		return nil, fmt.Errorf("error creating processor: %v", err)
-	}
-	return p, nil
+	return &defaultProcessor{
+		payloadChannel: h.PayloadChannels[topic],
+		errorChannel:   h.ErrorChannels[topic],
+	}, nil
 }
 
 func (h *DefaultHandler) MessageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
-	if _, ok := h.PayloadChannels[topic]; ok {
-		h.PayloadChannels[topic] <- msg.Payload()
+	if ch, ok := h.PayloadChannels[topic]; ok {
+		ch <- msg.Payload()
 	}
 	for possibleWildcard := range h.PayloadChannels {
-		if h.WildCardMatch(possibleWildcard, topic) {
+		if h.wildCardMatch(possibleWildcard, topic) {
 			h.PayloadChannels[topic] <- msg.Payload()
 			return
 		}
@@ -140,7 +138,7 @@ func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
 	return h.Client, nil
 }
 
-func (h *DefaultHandler) WildCardMatch(wildcard, topic string) bool {
+func (h *DefaultHandler) wildCardMatch(wildcard, topic string) bool {
 	if wildcard == topic {
 		return true
 	}
@@ -161,27 +159,20 @@ func (h *DefaultHandler) WildCardMatch(wildcard, topic string) bool {
 	return true
 }
 
-type DefaultProcessor struct {
-	PayloadChannel chan []byte
-	ErrorChannel   chan error
+type defaultProcessor struct {
+	payloadChannel chan []byte
+	errorChannel   chan error
 }
 
-func NewDefaultProcessor(payloadCh chan []byte, errCh chan error) (*DefaultProcessor, error) {
-	return &DefaultProcessor{
-		PayloadChannel: payloadCh,
-		ErrorChannel:   errCh,
-	}, nil
+func (p *defaultProcessor) getPayloadChannel() <-chan []byte {
+	return p.payloadChannel
 }
 
-func (p *DefaultProcessor) GetPayloadChannel() <-chan []byte {
-	return p.PayloadChannel
-}
-
-func (p *DefaultProcessor) GetErrorChannel() (chan error, error) {
-	if p.ErrorChannel == nil {
+func (p *defaultProcessor) getErrorChannel() (chan error, error) {
+	if p.errorChannel == nil {
 		return nil, fmt.Errorf("error channel is nil")
 	}
-	return p.ErrorChannel, nil
+	return p.errorChannel, nil
 }
 
 // AsyncPayloadHandler listens on the TopicProcessor payload channel
@@ -193,18 +184,18 @@ func (p *DefaultProcessor) GetErrorChannel() (chan error, error) {
 // Parameters:
 // - numWorkers: Determines how many workers are spawned to handle payload processing.
 // - processFunc: A client-defined function that defines what to do with a received payload.
-func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
+func (p *defaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
 	var wg sync.WaitGroup
 	workerTask := func() {
 		defer wg.Done()
 		for {
 			select {
-			case payload, ok := <-p.GetPayloadChannel():
+			case payload, ok := <-p.getPayloadChannel():
 				if !ok {
 					return
 				}
 				if err := processFunc(payload); err != nil {
-					errCh, closedChErr := p.GetErrorChannel()
+					errCh, closedChErr := p.getErrorChannel()
 					if closedChErr != nil {
 						return
 					}
@@ -231,9 +222,9 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 }
 
 // PayloadProcess handles the first payload it receives, before exiting.
-func (p *DefaultProcessor) PayloadProcess(ctx context.Context, processFunc func([]byte) error) error {
+func (p *defaultProcessor) PayloadProcess(ctx context.Context, processFunc func([]byte) error) error {
 	select {
-	case payload := <-p.GetPayloadChannel():
+	case payload := <-p.getPayloadChannel():
 		if err := processFunc(payload); err != nil {
 			return fmt.Errorf("error processing payload: %v", err)
 		}
