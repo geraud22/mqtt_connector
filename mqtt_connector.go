@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dimonomid/clock"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	cfy "github.com/geraud22/config-from-yaml"
 )
@@ -23,6 +22,7 @@ type MqttHandler interface {
 	WildCardMatch(wildcard, topic string) bool
 }
 
+// Note: TopicProcessor is spawned by MqttHandler Subscribe. Therefore, MqttHandler remains responsible for closing spawned TopicProcessors.
 type TopicProcessor interface {
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() (chan error, error)
@@ -77,6 +77,7 @@ func NewDefaultHandler() (MqttHandler, error) {
 	return &h, nil
 }
 
+// This implementation ensures spawned TopicProcessors are closed now.
 func (h *DefaultHandler) Close() error {
 	for topic := range h.PayloadChannels {
 		if token := h.Client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
@@ -93,6 +94,43 @@ func (h *DefaultHandler) Close() error {
 	})
 	h.Client.Disconnect(250)
 	return nil
+}
+
+// Note: Because the Handler Spawns TopicProcessors, the Handler maintains responsibility for closing them.
+func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
+	token := h.Client.Subscribe(topic, 1, nil)
+	if ok := token.WaitTimeout(10 * time.Second); !ok {
+		return nil, fmt.Errorf("failed to subscribe to topic: %s", topic)
+	}
+	h.PayloadChannels[topic] = make(chan []byte)
+	h.ErrorChannels[topic] = make(chan error)
+	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
+	p, err := NewDefaultProcessor(h.PayloadChannels[topic], h.ErrorChannels[topic])
+	if err != nil {
+		return nil, fmt.Errorf("error creating processor: %v", err)
+	}
+	return p, nil
+}
+
+func (h *DefaultHandler) MessageHandler(client mqtt.Client, msg mqtt.Message) {
+	topic := msg.Topic()
+	if _, ok := h.PayloadChannels[topic]; ok {
+		h.PayloadChannels[topic] <- msg.Payload()
+	}
+	for possibleWildcard := range h.PayloadChannels {
+		if h.WildCardMatch(possibleWildcard, topic) {
+			h.PayloadChannels[topic] <- msg.Payload()
+			return
+		}
+	}
+}
+
+func (h *DefaultHandler) connectHandler(client mqtt.Client) {
+	log.Println("Mqtt Connector - Client Connected")
+}
+
+func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
+	log.Printf("Mqtt Connector - Connection lost: %v", err)
 }
 
 func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
@@ -123,56 +161,15 @@ func (h *DefaultHandler) WildCardMatch(wildcard, topic string) bool {
 	return true
 }
 
-func (h *DefaultHandler) MessageHandler(client mqtt.Client, msg mqtt.Message) {
-	topic := msg.Topic()
-	if _, ok := h.PayloadChannels[topic]; ok {
-		h.PayloadChannels[topic] <- msg.Payload()
-	}
-	for possibleWildcard := range h.PayloadChannels {
-		if h.WildCardMatch(possibleWildcard, topic) {
-			h.PayloadChannels[topic] <- msg.Payload()
-			return
-		}
-	}
-}
-
-func (h *DefaultHandler) connectHandler(client mqtt.Client) {
-	log.Println("Mqtt Connector - Client Connected")
-}
-
-func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
-	log.Printf("Mqtt Connector - Connection lost: %v", err)
-}
-
-func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
-	token := h.Client.Subscribe(topic, 1, nil)
-	if ok := token.WaitTimeout(10 * time.Second); !ok {
-		return nil, fmt.Errorf("failed to subscribe to topic: %s", topic)
-	}
-	h.PayloadChannels[topic] = make(chan []byte)
-	h.ErrorChannels[topic] = make(chan error)
-	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
-	p, err := NewDefaultProcessor(clock.New(), h.PayloadChannels[topic], h.ErrorChannels[topic])
-	if err != nil {
-		return nil, fmt.Errorf("error creating processor: %v", err)
-	}
-	return p, nil
-}
-
 type DefaultProcessor struct {
 	PayloadChannel chan []byte
 	ErrorChannel   chan error
-	Clock          clock.Clock
 }
 
-func NewDefaultProcessor(clock clock.Clock, payloadCh chan []byte, errCh chan error) (*DefaultProcessor, error) {
-	if clock == nil {
-		return nil, fmt.Errorf("received nil clock")
-	}
+func NewDefaultProcessor(payloadCh chan []byte, errCh chan error) (*DefaultProcessor, error) {
 	return &DefaultProcessor{
 		PayloadChannel: payloadCh,
 		ErrorChannel:   errCh,
-		Clock:          clock,
 	}, nil
 }
 
@@ -207,8 +204,8 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 					return
 				}
 				if err := processFunc(payload); err != nil {
-					errCh, errGet := p.GetErrorChannel()
-					if errGet != nil {
+					errCh, closedChErr := p.GetErrorChannel()
+					if closedChErr != nil {
 						return
 					}
 					select {
@@ -240,8 +237,8 @@ func (p *DefaultProcessor) PayloadProcess(ctx context.Context, processFunc func(
 		if err := processFunc(payload); err != nil {
 			return fmt.Errorf("error processing payload: %v", err)
 		}
+		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("operation cancelled: %v", ctx.Err())
 	}
-	return nil
 }
