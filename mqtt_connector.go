@@ -27,7 +27,7 @@ type TopicProcessor interface {
 	GetPayloadChannel() <-chan []byte
 	GetErrorChannel() (chan error, error)
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
-	PayloadProcess(timeout time.Duration, processFunc func([]byte) error) error
+	PayloadProcess(ctx context.Context, processFunc func([]byte) error) error
 }
 
 func GetDefaultOpts() *mqtt.ClientOptions {
@@ -234,16 +234,12 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 }
 
 // PayloadProcess handles the first payload it receives, before exiting.
-func (p *DefaultProcessor) PayloadProcess(timeout time.Duration, processFunc func([]byte) error) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func (p *DefaultProcessor) PayloadProcess(ctx context.Context, processFunc func([]byte) error) error {
 	select {
 	case payload := <-p.GetPayloadChannel():
 		if err := processFunc(payload); err != nil {
 			return fmt.Errorf("error processing payload: %v", err)
 		}
-	case <-p.Clock.After(timeout):
-		return fmt.Errorf("operation time out before payload received: %v", ctx.Err())
 	case <-ctx.Done():
 		return fmt.Errorf("operation cancelled: %v", ctx.Err())
 	}
