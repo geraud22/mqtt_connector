@@ -23,7 +23,6 @@ type MqttHandler interface {
 	GetClient() (mqtt.Client, error)
 }
 
-// Note: TopicProcessor is spawned by MqttHandler Subscribe. Therefore, MqttHandler remains responsible for closing spawned TopicProcessors.
 type TopicProcessor interface {
 	Close() error
 	SendPayload(payload []byte)
@@ -56,7 +55,7 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 }
 
 type DefaultHandler struct {
-	Client     mqtt.Client
+	client     mqtt.Client
 	processors map[string]TopicProcessor
 }
 
@@ -72,22 +71,22 @@ func NewDefaultHandler() (MqttHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to mqtt: %v", err)
 	}
-	h.Client = client
+	h.client = client
 	return &h, nil
 }
 
 func (h *DefaultHandler) Close() error {
 	for topic := range h.processors {
-		if token := h.Client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
+		if token := h.client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
 			return fmt.Errorf("error unsubscribing from topic: %s", topic)
 		}
 	}
-	h.Client.Disconnect(250)
+	h.client.Disconnect(250)
 	return nil
 }
 
 func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
-	token := h.Client.Subscribe(topic, 1, nil)
+	token := h.client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return nil, fmt.Errorf("failed to subscribe to topic: %s", topic)
 	}
@@ -124,10 +123,10 @@ func (h *DefaultHandler) connectLostHandler(client mqtt.Client, err error) {
 }
 
 func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
-	if !h.Client.IsConnected() {
+	if !h.client.IsConnected() {
 		return nil, fmt.Errorf("client not connected")
 	}
-	return h.Client, nil
+	return h.client, nil
 }
 
 func (h *DefaultHandler) match(wildcard, topic string) bool {
@@ -162,10 +161,6 @@ func (p *defaultProcessor) Close() error {
 		close(p.errorChannel)
 	})
 	return nil
-}
-
-func (p *defaultProcessor) getPayloadChannel() <-chan []byte {
-	return p.payloadChannel
 }
 
 func (p *defaultProcessor) getErrorChannel() (chan error, error) {

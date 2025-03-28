@@ -10,7 +10,7 @@ import (
 )
 
 var dh = &DefaultHandler{
-	Client:     &MockMqttClient{},
+	client:     &MockMqttClient{},
 	processors: make(map[string]TopicProcessor),
 }
 
