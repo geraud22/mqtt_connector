@@ -237,18 +237,15 @@ func (p *DefaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 func (p *DefaultProcessor) PayloadProcess(timeout time.Duration, processFunc func([]byte) error) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	timeoutCh := make(chan struct{}, 1)
-	p.Clock.AfterFunc(timeout, func() { close(timeoutCh) })
 	select {
 	case payload := <-p.GetPayloadChannel():
 		if err := processFunc(payload); err != nil {
 			return fmt.Errorf("error processing payload: %v", err)
 		}
-	case <-timeoutCh:
+	case <-p.Clock.After(timeout):
 		return fmt.Errorf("operation time out before payload received: %v", ctx.Err())
 	case <-ctx.Done():
 		return fmt.Errorf("operation cancelled: %v", ctx.Err())
 	}
-	log.Println("exited")
 	return nil
 }
