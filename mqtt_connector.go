@@ -14,19 +14,21 @@ import (
 
 var once sync.Once
 
+type ProcessFunc func([]byte) error
+
 type MqttHandler interface {
-	MessageHandler(client mqtt.Client, msg mqtt.Message)
 	Close() error
+	MessageHandler(client mqtt.Client, msg mqtt.Message)
 	Subscribe(topic string) (TopicProcessor, error)
 	GetClient() (mqtt.Client, error)
 }
 
 // Note: TopicProcessor is spawned by MqttHandler Subscribe. Therefore, MqttHandler remains responsible for closing spawned TopicProcessors.
 type TopicProcessor interface {
-	getPayloadChannel() <-chan []byte
-	getErrorChannel() (chan error, error)
-	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error)
-	PayloadProcess(ctx context.Context, processFunc func([]byte) error) error
+	Close() error
+	SendPayload(payload []byte)
+	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc ProcessFunc)
+	PayloadProcess(ctx context.Context, processFunc ProcessFunc) error
 }
 
 func GetDefaultOpts() *mqtt.ClientOptions {
@@ -54,15 +56,13 @@ func ConnectMqtt(opts *mqtt.ClientOptions) (mqtt.Client, error) {
 }
 
 type DefaultHandler struct {
-	Client          mqtt.Client
-	PayloadChannels map[string]chan []byte
-	ErrorChannels   map[string]chan error
+	Client     mqtt.Client
+	processors map[string]TopicProcessor
 }
 
 func NewDefaultHandler() (MqttHandler, error) {
 	h := DefaultHandler{
-		PayloadChannels: make(map[string]chan []byte, 0),
-		ErrorChannels:   make(map[string]chan error),
+		processors: make(map[string]TopicProcessor, 0),
 	}
 	opts := GetDefaultOpts()
 	opts.SetDefaultPublishHandler(h.MessageHandler)
@@ -76,49 +76,41 @@ func NewDefaultHandler() (MqttHandler, error) {
 	return &h, nil
 }
 
-// This implementation ensures spawned TopicProcessors are closed now.
 func (h *DefaultHandler) Close() error {
-	for topic := range h.PayloadChannels {
+	for topic := range h.processors {
 		if token := h.Client.Unsubscribe(topic); !token.WaitTimeout(5 * time.Second) {
 			return fmt.Errorf("error unsubscribing from topic: %s", topic)
 		}
 	}
-	once.Do(func() {
-		for _, c := range h.PayloadChannels {
-			close(c)
-		}
-		for _, c := range h.ErrorChannels {
-			close(c)
-		}
-	})
 	h.Client.Disconnect(250)
 	return nil
 }
 
-// Note: Because the Handler Spawns TopicProcessors, the Handler maintains responsibility for closing them.
 func (h *DefaultHandler) Subscribe(topic string) (TopicProcessor, error) {
 	token := h.Client.Subscribe(topic, 1, nil)
 	if ok := token.WaitTimeout(10 * time.Second); !ok {
 		return nil, fmt.Errorf("failed to subscribe to topic: %s", topic)
 	}
-	h.PayloadChannels[topic] = make(chan []byte)
-	h.ErrorChannels[topic] = make(chan error)
 	log.Printf("Mqtt Connector - Subscribed to topic: %s", topic)
-	return &defaultProcessor{
-		payloadChannel: h.PayloadChannels[topic],
-		errorChannel:   h.ErrorChannels[topic],
-	}, nil
+	p := &defaultProcessor{
+		payloadChannel: make(chan []byte),
+		errorChannel:   make(chan error),
+	}
+	h.processors[topic] = p
+	return p, nil
 }
 
 func (h *DefaultHandler) MessageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
-	if ch, ok := h.PayloadChannels[topic]; ok {
-		ch <- msg.Payload()
+	if p, ok := h.processors[topic]; ok {
+		p.SendPayload(msg.Payload())
 	}
-	for possibleWildcard := range h.PayloadChannels {
-		if h.wildCardMatch(possibleWildcard, topic) {
-			h.PayloadChannels[topic] <- msg.Payload()
-			return
+	for wildcard := range h.processors {
+		if h.match(wildcard, topic) {
+			if p, ok := h.processors[wildcard]; ok {
+				p.SendPayload(msg.Payload())
+				return
+			}
 		}
 	}
 }
@@ -138,7 +130,7 @@ func (h *DefaultHandler) GetClient() (mqtt.Client, error) {
 	return h.Client, nil
 }
 
-func (h *DefaultHandler) wildCardMatch(wildcard, topic string) bool {
+func (h *DefaultHandler) match(wildcard, topic string) bool {
 	if wildcard == topic {
 		return true
 	}
@@ -164,6 +156,14 @@ type defaultProcessor struct {
 	errorChannel   chan error
 }
 
+func (p *defaultProcessor) Close() error {
+	once.Do(func() {
+		close(p.payloadChannel)
+		close(p.errorChannel)
+	})
+	return nil
+}
+
 func (p *defaultProcessor) getPayloadChannel() <-chan []byte {
 	return p.payloadChannel
 }
@@ -175,6 +175,13 @@ func (p *defaultProcessor) getErrorChannel() (chan error, error) {
 	return p.errorChannel, nil
 }
 
+func (p *defaultProcessor) SendPayload(payload []byte) {
+	if p.payloadChannel == nil {
+		return
+	}
+	p.payloadChannel <- payload
+}
+
 // AsyncPayloadHandler listens on the TopicProcessor payload channel
 // and processes incoming MQTT payloads asynchronously.
 //
@@ -184,13 +191,13 @@ func (p *defaultProcessor) getErrorChannel() (chan error, error) {
 // Parameters:
 // - numWorkers: Determines how many workers are spawned to handle payload processing.
 // - processFunc: A client-defined function that defines what to do with a received payload.
-func (p *defaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc func([]byte) error) {
+func (p *defaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc ProcessFunc) {
 	var wg sync.WaitGroup
 	workerTask := func() {
 		defer wg.Done()
 		for {
 			select {
-			case payload, ok := <-p.getPayloadChannel():
+			case payload, ok := <-p.payloadChannel:
 				if !ok {
 					return
 				}
@@ -222,9 +229,9 @@ func (p *defaultProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers i
 }
 
 // PayloadProcess handles the first payload it receives, before exiting.
-func (p *defaultProcessor) PayloadProcess(ctx context.Context, processFunc func([]byte) error) error {
+func (p *defaultProcessor) PayloadProcess(ctx context.Context, processFunc ProcessFunc) error {
 	select {
-	case payload := <-p.getPayloadChannel():
+	case payload := <-p.payloadChannel:
 		if err := processFunc(payload); err != nil {
 			return fmt.Errorf("error processing payload: %v", err)
 		}

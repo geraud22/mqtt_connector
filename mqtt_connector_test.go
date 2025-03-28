@@ -10,9 +10,8 @@ import (
 )
 
 var dh = &DefaultHandler{
-	Client:          &MockMqttClient{},
-	PayloadChannels: make(map[string]chan []byte),
-	ErrorChannels:   make(map[string]chan error),
+	Client:     &MockMqttClient{},
+	processors: make(map[string]TopicProcessor),
 }
 
 type MockToken struct{}
@@ -88,7 +87,7 @@ func TestSubscribe(t *testing.T) {
 		if tt.wantErr != (err != nil) {
 			t.Fatalf("%s FAILED: expected err: %v, got: %v", tt.name, tt.wantErr, err)
 		}
-		if _, ok := dh.PayloadChannels[tt.topic]; !ok {
+		if _, ok := dh.processors[tt.topic]; !ok {
 			t.Fatalf("%s channel is invalid", tt.topic)
 		}
 	}
@@ -183,7 +182,7 @@ func TestMatch(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if ok := dh.wildCardMatch(tt.wildcard, tt.topic); ok != tt.want {
+		if ok := dh.match(tt.wildcard, tt.topic); ok != tt.want {
 			t.Fatalf("%s FAILED expected %v, got %v", tt.name, tt.want, ok)
 		}
 	}
