@@ -217,3 +217,49 @@ func TestGetErrorChannel(t *testing.T) {
 		p.errorChannel = nil
 	}
 }
+
+type MockMqttMessage struct {
+	topic string
+}
+
+func NewMqttMessage(topic string) *MockMqttMessage {
+	return &MockMqttMessage{
+		topic: topic,
+	}
+}
+
+func (m *MockMqttMessage) Duplicate() bool   { return false }
+func (m *MockMqttMessage) Qos() byte         { return byte(1) }
+func (m *MockMqttMessage) Retained() bool    { return false }
+func (m *MockMqttMessage) Topic() string     { return m.topic }
+func (m *MockMqttMessage) MessageID() uint16 { return uint16(1) }
+func (m *MockMqttMessage) Payload() []byte   { return nil }
+func (m *MockMqttMessage) Ack()              {}
+
+var payloadSent int
+
+type MockProcessor struct {
+}
+
+func (m *MockProcessor) Close() error                         { return nil }
+func (m *MockProcessor) SendPayload(payload []byte)           { payloadSent++ }
+func (m *MockProcessor) GetErrorChannel() (chan error, error) { return nil, nil }
+func (m *MockProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc ProcessFunc) {
+}
+func (m *MockProcessor) PayloadProcess(ctx context.Context, processFunc ProcessFunc) error {
+	return nil
+}
+
+func TestMessageHandler(t *testing.T) {
+	topic := "someTopic"
+	message := NewMqttMessage(topic)
+	h := &DefaultHandler{
+		processors: map[string]TopicProcessor{
+			topic: &MockProcessor{},
+		},
+	}
+	h.MessageHandler(&MockMqttClient{}, message)
+	if payloadSent != 1 {
+		t.Fatalf("payload sent not equal to 1. Rather: %d", payloadSent)
+	}
+}
