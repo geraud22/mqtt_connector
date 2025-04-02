@@ -236,8 +236,6 @@ func (m *MockMqttMessage) MessageID() uint16 { return uint16(1) }
 func (m *MockMqttMessage) Payload() []byte   { return nil }
 func (m *MockMqttMessage) Ack()              {}
 
-var payloadSent int
-
 type MockProcessor struct {
 }
 
@@ -250,16 +248,45 @@ func (m *MockProcessor) PayloadProcess(ctx context.Context, processFunc ProcessF
 	return nil
 }
 
+var payloadSent int
+
 func TestMessageHandler(t *testing.T) {
-	topic := "someTopic"
-	message := newMockMqttMessage(topic)
-	h := &DefaultHandler{
-		processors: map[string]TopicProcessor{
-			topic: &MockProcessor{},
+	tests := []struct {
+		name           string
+		subscribeTopic string
+		messageTopic   string
+		wantSendCount  int
+	}{
+		{
+			name:           "successful send",
+			subscribeTopic: "someTopic",
+			messageTopic:   "someTopic",
+			wantSendCount:  1,
+		},
+		{
+			name:           "successful wildcard send",
+			subscribeTopic: "some/+/wildcard",
+			messageTopic:   "some/successful/wildcard",
+			wantSendCount:  1,
+		},
+		{
+			name:           "unsuccessful send",
+			subscribeTopic: "something",
+			messageTopic:   "else",
+			wantSendCount:  0,
 		},
 	}
-	h.MessageHandler(&MockMqttClient{}, message)
-	if payloadSent != 1 {
-		t.Fatalf("payload sent not equal to 1. Rather: %d", payloadSent)
+	for _, tt := range tests {
+		payloadSent = 0
+		message := newMockMqttMessage(tt.messageTopic)
+		h := &DefaultHandler{
+			processors: map[string]TopicProcessor{
+				tt.subscribeTopic: &MockProcessor{},
+			},
+		}
+		h.MessageHandler(&MockMqttClient{}, message)
+		if payloadSent != tt.wantSendCount {
+			t.Fatalf("payload sent not equal to 1. Rather: %d", payloadSent)
+		}
 	}
 }
