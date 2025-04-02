@@ -109,6 +109,7 @@ func (h *DefaultHandler) MessageHandler(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
 	if p, ok := h.processors[topic]; ok {
 		p.SendPayload(msg.Payload())
+		return
 	}
 	for wildcard := range h.processors {
 		if h.match(wildcard, topic) {

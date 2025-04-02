@@ -222,7 +222,7 @@ type MockMqttMessage struct {
 	topic string
 }
 
-func NewMqttMessage(topic string) *MockMqttMessage {
+func newMockMqttMessage(topic string) *MockMqttMessage {
 	return &MockMqttMessage{
 		topic: topic,
 	}
@@ -252,7 +252,7 @@ func (m *MockProcessor) PayloadProcess(ctx context.Context, processFunc ProcessF
 
 func TestMessageHandler(t *testing.T) {
 	topic := "someTopic"
-	message := NewMqttMessage(topic)
+	message := newMockMqttMessage(topic)
 	h := &DefaultHandler{
 		processors: map[string]TopicProcessor{
 			topic: &MockProcessor{},
