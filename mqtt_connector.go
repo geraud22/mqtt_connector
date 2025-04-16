@@ -23,7 +23,7 @@ type MqttHandler interface {
 type TopicProcessor interface {
 	Close() error
 	SendPayload(payload []byte)
-	GetErrorChannel() (chan error, error)
+	GetErrorChannel() chan error
 	AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc ProcessFunc)
 	PayloadProcess(ctx context.Context, processFunc ProcessFunc) error
 }
@@ -168,8 +168,8 @@ func (p *processor) SendPayload(payload []byte) {
 	p.payloadChannel <- payload
 }
 
-func (p *processor) GetErrorChannel() (chan error, error) {
-	return p.errorChannel, nil
+func (p *processor) GetErrorChannel() chan error {
+	return p.errorChannel
 }
 
 // AsyncPayloadHandler listens on the TopicProcessor payload channel
@@ -192,12 +192,8 @@ func (p *processor) AsyncPayloadProcess(ctx context.Context, numWorkers int, pro
 					return
 				}
 				if err := processFunc(payload); err != nil {
-					errCh, closedChErr := p.GetErrorChannel()
-					if closedChErr != nil {
-						return
-					}
 					select {
-					case errCh <- err:
+					case p.GetErrorChannel() <- err:
 					case <-ctx.Done():
 						return
 					}

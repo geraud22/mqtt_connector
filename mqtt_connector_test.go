@@ -9,7 +9,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-var dh = &DefaultHandler{
+var dh = &handler{
 	client:     &MockMqttClient{},
 	processors: make(map[string]TopicProcessor),
 }
@@ -94,7 +94,7 @@ func TestSubscribe(t *testing.T) {
 }
 
 func TestPayloadProcess(t *testing.T) {
-	p := &defaultProcessor{}
+	p := &processor{}
 	processFunc := func(_ []byte) error {
 		return nil
 	}
@@ -188,36 +188,6 @@ func TestMatch(t *testing.T) {
 	}
 }
 
-func TestGetErrorChannel(t *testing.T) {
-	p := &defaultProcessor{}
-	tests := []struct {
-		name    string
-		wantErr bool
-	}{
-		{
-			name:    "successful channel retrieval",
-			wantErr: false,
-		},
-		{
-			name:    "unsuccessful channel retrieval",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		var err error
-		if !tt.wantErr {
-			p.errorChannel = make(chan error, 1)
-			defer close(p.errorChannel)
-		}
-		_, err = p.GetErrorChannel()
-		if tt.wantErr != (err != nil) {
-			t.Fatalf("%s FAILED: wantErr: %v, err: %v", tt.name, tt.wantErr, err)
-		}
-		p.errorChannel = nil
-	}
-}
-
 type MockMqttMessage struct {
 	topic string
 }
@@ -239,9 +209,9 @@ func (m *MockMqttMessage) Ack()              {}
 type MockProcessor struct {
 }
 
-func (m *MockProcessor) Close() error                         { return nil }
-func (m *MockProcessor) SendPayload(payload []byte)           { payloadSent++ }
-func (m *MockProcessor) GetErrorChannel() (chan error, error) { return nil, nil }
+func (m *MockProcessor) Close() error                { return nil }
+func (m *MockProcessor) SendPayload(payload []byte)  { payloadSent++ }
+func (m *MockProcessor) GetErrorChannel() chan error { return nil }
 func (m *MockProcessor) AsyncPayloadProcess(ctx context.Context, numWorkers int, processFunc ProcessFunc) {
 }
 func (m *MockProcessor) PayloadProcess(ctx context.Context, processFunc ProcessFunc) error {
@@ -279,7 +249,7 @@ func TestMessageHandler(t *testing.T) {
 	for _, tt := range tests {
 		payloadSent = 0
 		message := newMockMqttMessage(tt.messageTopic)
-		h := &DefaultHandler{
+		h := &handler{
 			processors: map[string]TopicProcessor{
 				tt.subscribeTopic: &MockProcessor{},
 			},
